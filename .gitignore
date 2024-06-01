@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+data/
+BraTS2021/
+.tumor_env/
 
 # C extensions
 *.so
