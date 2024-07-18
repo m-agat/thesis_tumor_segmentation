@@ -1,0 +1,3 @@
+# Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). nnU-Net: a self-configuring 
+# method for deep learning-based biomedical image segmentation. Nature methods, 18(2), 203-211.
+
