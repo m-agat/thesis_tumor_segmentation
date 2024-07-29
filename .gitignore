@@ -6,14 +6,11 @@ __pycache__/
 BraTS2024-BraTS-GLI-TrainingData/
 BraTS2024-BraTS-GLI-ValidationData/
 
-# Ignore raw dataset directory
 nnUNet_raw/
-
-# Ignore preprocessed data
 nnUNet_preprocessed/
-
-# Ignore results
 nnUNet_results/
+nnUNet_predictions/
+nnUNet_postprocessed/
 
 # C extensions
 *.so
