@@ -17,6 +17,10 @@ UNet_predictions/
 unet_model.pth
 runs/
 
+VNet_predictions/
+VNet_predictions_png/
+vnet_model.pth
+
 # C extensions
 *.so
 

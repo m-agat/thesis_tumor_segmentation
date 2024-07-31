@@ -46,7 +46,9 @@ class BrainTumorValidationDatasetNifti(Dataset):
 
 # Path to your test dataset
 transform = False
-validation_image_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-ValidationData/validation_data_subset"
+current_dir = os.getcwd()
+parent_dir = os.path.dirname(current_dir)
+validation_image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-ValidationData/validation_data_subset"
 validation_dataset = BrainTumorValidationDatasetNifti(image_dir=validation_image_dir, transform=transform)
 validation_dataloader = DataLoader(validation_dataset, batch_size=1, shuffle=False)
 

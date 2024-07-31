@@ -1,27 +1,24 @@
 import os
 import nibabel as nib
 import numpy as np
-from monai.transforms import (
-    LoadImaged,
-    Spacingd,
-    Orientationd,
-    ScaleIntensityRanged,
-    CropForegroundd,
-    RandCropByPosNegLabeld,
-    RandFlipd,
-    RandRotate90d,
-    RandShiftIntensityd,
-    ToTensord,
-)
-from monai.data import DataLoader, CacheDataset, Dataset
+from monai.transforms import LoadImaged, EnsureChannelFirstd, ToTensord, Compose, SpatialPadd, RandSpatialCropd
+from monai.data import DataLoader, CacheDataset
 from monai.utils import set_determinism
 from glob import glob
+from tqdm import tqdm
+import torch
+from torch.utils.tensorboard import SummaryWriter
+import monai
+from monai.networks.nets import VNet
+from monai.losses import DiceLoss
 
+# Ensure reproducibility
 set_determinism(seed=0)
 
 # Define paths
-# image_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
-image_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
+current_dir = os.getcwd()
+parent_dir = os.path.dirname(current_dir)
+image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
 
 # Get all the case paths
 case_paths = glob(os.path.join(image_dir, "*"))
@@ -40,41 +37,21 @@ for case in case_paths:
     }
     data_dicts.append(data_dict)
 
-# Define transformations
-train_transforms = [
+# Define transformations with padding and cropping
+train_transforms = Compose([
     LoadImaged(keys=["image", "label"]),
-    Spacingd(keys=["image", "label"], pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
-    Orientationd(keys=["image", "label"], axcodes="RAS"),
-    ScaleIntensityRanged(
-        keys=["image"], a_min=-175.0, a_max=250.0, b_min=0.0, b_max=1.0, clip=True
-    ),
-    CropForegroundd(keys=["image", "label"], source_key="image"),
-    RandCropByPosNegLabeld(
-        keys=["image", "label"],
-        label_key="label",
-        spatial_size=(128, 128, 64),
-        pos=1,
-        neg=1,
-        num_samples=4,
-        image_key="image",
-        image_threshold=0,
-    ),
-    RandFlipd(keys=["image", "label"], spatial_axis=[0], prob=0.50),
-    RandFlipd(keys=["image", "label"], spatial_axis=[1], prob=0.50),
-    RandFlipd(keys=["image", "label"], spatial_axis=[2], prob=0.50),
-    RandRotate90d(keys=["image", "label"], prob=0.50, max_k=3),
-    RandShiftIntensityd(keys=["image"], offsets=0.10, prob=0.50),
+    EnsureChannelFirstd(keys=["image", "label"]),
+    SpatialPadd(keys=["image", "label"], spatial_size=[128, 128, 128]),  # Padding to ensure consistent dimensions
+    RandSpatialCropd(keys=["image", "label"], roi_size=[128, 128, 128], random_size=False),  # Crop to ensure the dimensions are divisible by the pooling factor
     ToTensord(keys=["image", "label"]),
-]
+])
 
 # Create dataset and dataloader
 train_ds = CacheDataset(data=data_dicts, transform=train_transforms, cache_rate=1.0, num_workers=4)
-train_loader = DataLoader(train_ds, batch_size=2, shuffle=True, num_workers=4)
+train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=4)  # Reduced batch size
 
-import monai
-from monai.networks.nets import VNet
-from monai.losses import DiceLoss
-import torch
+# Initialize TensorBoard writer
+writer = SummaryWriter()
 
 # Define the model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -85,22 +62,14 @@ model = VNet(spatial_dims=3, in_channels=4, out_channels=1).to(device)
 loss_function = DiceLoss(sigmoid=True)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-from monai.metrics import compute_meandice
-from monai.data import decollate_batch
-from monai.transforms import AsDiscrete, Activations
-
-# Define post-processing transforms
-post_pred = AsDiscrete(argmax=True, to_onehot=2)
-post_label = AsDiscrete(to_onehot=2)
-
-# Define the training loop
+# Training loop
 num_epochs = 2
 
 for epoch in range(num_epochs):
     model.train()
     epoch_loss = 0
 
-    for batch_data in train_loader:
+    for batch_idx, batch_data in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}")):
         inputs, labels = batch_data["image"].to(device), batch_data["label"].to(device)
 
         optimizer.zero_grad()
@@ -110,8 +79,19 @@ for epoch in range(num_epochs):
         optimizer.step()
         epoch_loss += loss.item()
 
-    print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss / len(train_loader)}")
+        # Log loss to TensorBoard
+        writer.add_scalar("Training Loss", loss.item(), epoch * len(train_loader) + batch_idx)
+
+        if batch_idx % 10 == 0:
+            print(f"Epoch {epoch + 1}/{num_epochs}, Batch {batch_idx + 1}/{len(train_loader)}, Loss: {loss.item()}")
+
+    # Log average loss per epoch to TensorBoard
+    writer.add_scalar("Average Loss per Epoch", epoch_loss / len(train_loader), epoch)
+
+    print(f"Epoch {epoch + 1}/{num_epochs} completed. Average Loss: {epoch_loss / len(train_loader)}")
 
 print("Training Complete")
 torch.save(model.state_dict(), "vnet_model.pth")
 
+# Close the TensorBoard writer
+writer.close()
