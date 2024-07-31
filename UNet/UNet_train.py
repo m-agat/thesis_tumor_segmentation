@@ -16,8 +16,10 @@ from UNet import BuildUNet, BrainTumorDatasetNifti
 #     transforms.ToTensor(),
 # ])
 transform = None
+current_dir = os.getcwd()
+parent_dir = os.path.dirname(current_dir)
 # image_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
-image_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
+image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
 dataset = BrainTumorDatasetNifti(image_dir=image_dir, transform=transform)
 dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
