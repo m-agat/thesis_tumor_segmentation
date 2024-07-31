@@ -11,6 +11,10 @@ nnUNet_preprocessed/
 nnUNet_results/
 nnUNet_predictions/
 nnUNet_postprocessed/
+nnUNet_val_slice_images/
+
+UNet_predictions/
+runs/
 
 # C extensions
 *.so
