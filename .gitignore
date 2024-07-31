@@ -2,9 +2,19 @@
 __pycache__/
 *.py[cod]
 *$py.class
-data/
-BraTS2021/
 .thesis_env/
+BraTS2024-BraTS-GLI-TrainingData/
+BraTS2024-BraTS-GLI-ValidationData/
+
+nnUNet_raw/
+nnUNet_preprocessed/
+nnUNet_results/
+nnUNet_predictions/
+nnUNet_postprocessed/
+nnUNet_val_slice_images/
+
+UNet_predictions/
+runs/
 
 # C extensions
 *.so
