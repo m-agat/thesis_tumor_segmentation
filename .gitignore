@@ -5,6 +5,7 @@ __pycache__/
 .thesis_env/
 BraTS2024-BraTS-GLI-TrainingData/
 BraTS2024-BraTS-GLI-ValidationData/
+OLDBraTS2024-BraTS-GLI-ValidationData/
 
 nnUNet_raw/
 nnUNet_preprocessed/
