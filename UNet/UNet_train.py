@@ -9,7 +9,15 @@ import numpy as np
 import nibabel as nib
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from UNet import BuildUNet, BrainTumorDatasetNifti
+import sys
+
+# Add parent directory to the system path
+current_dir = os.getcwd()
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
+from brats_dataset.brats_loader3d import BrainTumorDatasetNifti
+from UNet import UNet3D
 
 # transform = transforms.Compose([
 #     transforms.Resize((256, 256)),
@@ -18,17 +26,18 @@ from UNet import BuildUNet, BrainTumorDatasetNifti
 transform = None
 current_dir = os.getcwd()
 parent_dir = os.path.dirname(current_dir)
-# image_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
-image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
-dataset = BrainTumorDatasetNifti(image_dir=image_dir, transform=transform)
-dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
+# image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
+# cases_subset = ["BraTS-GLI-00005-100", "BraTS-GLI-02064-102", "BraTS-GLI-02069-102", "BraTS-GLI-02085-103"]
+dataset = BrainTumorDatasetNifti(image_dir=image_dir, cases_subset=None, transform=transform)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
 # Initialize TensorBoard writer
 writer = SummaryWriter()
 
 # Model, criterion, optimizer
-model = BuildUNet()
-criterion = nn.BCEWithLogitsLoss()
+model = UNet3D(in_channels=4, out_channels=5)  # For multi-class segmentation
+criterion = nn.CrossEntropyLoss()  # CrossEntropyLoss for multi-class segmentation
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Device configuration
@@ -48,7 +57,7 @@ for epoch in range(num_epochs):
 
         optimizer.zero_grad()
         outputs = model(inputs)
-        loss = criterion(outputs, labels)
+        loss = criterion(outputs, labels.squeeze(1))  # CrossEntropyLoss expects shape (N, H, W) or (N, D, H, W)
         loss.backward()
         optimizer.step()
         epoch_loss += loss.item()
