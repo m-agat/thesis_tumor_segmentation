@@ -9,21 +9,25 @@ def create_subset(original_dir, new_dir, num_cases):
     cases = os.listdir(original_dir)
 
     # Copy a subset of cases to the new directory
-    for i, case in enumerate(cases):
-        if i >= num_cases:
+    copied_cases = 0
+    for case in cases:
+        if copied_cases >= num_cases:
             break
         case_path = os.path.join(original_dir, case)
         new_case_path = os.path.join(new_dir, case)
-        shutil.copytree(case_path, new_case_path)
+        
+        if not os.path.exists(new_case_path):  # Check if the case already exists in the new directory
+            shutil.copytree(case_path, new_case_path)
+            copied_cases += 1
 
-    print(f"Copied {num_cases} cases to {new_dir}")
+    print(f"Copied {copied_cases} cases to {new_dir}")
 
 # Define the original and new directories and the number of cases to copy
-# original_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
-# new_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
-original_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-ValidationData/validation_data"
-new_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-ValidationData/validation_data_subset"
-num_cases = 3  # Number of cases to copy
+original_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
+new_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
+# original_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-ValidationData/validation_data"
+# new_dir = f"{os.getcwd()}/BraTS2024-BraTS-GLI-ValidationData/validation_data_subset"
+num_cases = 200  # Number of cases to copy
 
 # Create the subset
 create_subset(original_dir, new_dir, num_cases)

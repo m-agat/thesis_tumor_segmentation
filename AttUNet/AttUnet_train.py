@@ -17,18 +17,15 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 from brats_dataset.brats_loader3d import BrainTumorDatasetNifti
-from UNet import UNet3D
+from AttUNet import AttUNet
 
-# transform = transforms.Compose([
-#     transforms.Resize((256, 256)),
-#     transforms.ToTensor(),
-# ])
+
 transform = None
 current_dir = os.getcwd()
 parent_dir = os.path.dirname(current_dir)
-image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
-# image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
-# cases_subset = ["BraTS-GLI-00005-100", "BraTS-GLI-02064-102", "BraTS-GLI-02069-102", "BraTS-GLI-02085-103"]
+# image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data1_v2"
+image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
+cases_subset = ["BraTS-GLI-00005-100", "BraTS-GLI-02064-102", "BraTS-GLI-02069-102", "BraTS-GLI-02085-103"]
 dataset = BrainTumorDatasetNifti(image_dir=image_dir, cases_subset=None, transform=transform)
 dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
@@ -36,7 +33,7 @@ dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 writer = SummaryWriter()
 
 # Model, criterion, optimizer
-model = UNet3D(in_channels=4, out_channels=5)  # For multi-class segmentation
+model = AttUNet(in_channels=4, out_channels=5)  # For multi-class segmentation
 criterion = nn.CrossEntropyLoss()  # CrossEntropyLoss for multi-class segmentation
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -74,7 +71,8 @@ for epoch in range(num_epochs):
     print(f"Epoch {epoch + 1}/{num_epochs} completed. Average Loss: {epoch_loss / len(dataloader)}")
 
 print("Training Complete")
-torch.save(model.state_dict(), "unet_model.pth")
+torch.save(model.state_dict(), "attunet_model.pth")
 
 # Close the TensorBoard writer
 writer.close()
+
