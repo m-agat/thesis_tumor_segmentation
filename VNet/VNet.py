@@ -1,97 +1,160 @@
-import os
-import nibabel as nib
-import numpy as np
-from monai.transforms import LoadImaged, EnsureChannelFirstd, ToTensord, Compose, SpatialPadd, RandSpatialCropd
-from monai.data import DataLoader, CacheDataset
-from monai.utils import set_determinism
-from glob import glob
-from tqdm import tqdm
 import torch
-from torch.utils.tensorboard import SummaryWriter
-import monai
-from monai.networks.nets import VNet
-from monai.losses import DiceLoss
+import torch.nn as nn
+import torch.nn.functional as F
 
-# Ensure reproducibility
-set_determinism(seed=0)
+# https://github.com/mattmacy/vnet.pytorch/blob/master/vnet.py#L17
 
-# Define paths
-current_dir = os.getcwd()
-parent_dir = os.path.dirname(current_dir)
-image_dir = f"{parent_dir}/BraTS2024-BraTS-GLI-TrainingData/training_data_subset"
+def passthrough(x, **kwargs):
+    return x
 
-# Get all the case paths
-case_paths = glob(os.path.join(image_dir, "*"))
+def ELUCons(elu, nchan):
+    if elu:
+        return nn.ELU(inplace=True)
+    else:
+        return nn.PReLU(nchan)
 
-# Create a list of dictionaries for the dataset
-data_dicts = []
-for case in case_paths:
-    data_dict = {
-        "image": [
-            os.path.join(case, f"{os.path.basename(case)}-t1c.nii.gz"),
-            os.path.join(case, f"{os.path.basename(case)}-t1n.nii.gz"),
-            os.path.join(case, f"{os.path.basename(case)}-t2f.nii.gz"),
-            os.path.join(case, f"{os.path.basename(case)}-t2w.nii.gz"),
-        ],
-        "label": os.path.join(case, f"{os.path.basename(case)}-seg.nii.gz"),
-    }
-    data_dicts.append(data_dict)
+# normalization between sub-volumes is necessary
+# for good performance
+class ContBatchNorm3d(nn.BatchNorm3d):
+    def _check_input_dim(self, input):
+        if input.dim() != 5:
+            raise ValueError('expected 5D input (got {}D input)'
+                             .format(input.dim()))
+        super(ContBatchNorm3d, self)._check_input_dim(input)
 
-# Define transformations with padding and cropping
-train_transforms = Compose([
-    LoadImaged(keys=["image", "label"]),
-    EnsureChannelFirstd(keys=["image", "label"]),
-    SpatialPadd(keys=["image", "label"], spatial_size=[128, 128, 128]),  # Padding to ensure consistent dimensions
-    RandSpatialCropd(keys=["image", "label"], roi_size=[128, 128, 128], random_size=False),  # Crop to ensure the dimensions are divisible by the pooling factor
-    ToTensord(keys=["image", "label"]),
-])
+    def forward(self, input):
+        self._check_input_dim(input)
+        return F.batch_norm(
+            input, self.running_mean, self.running_var, self.weight, self.bias,
+            True, self.momentum, self.eps)
 
-# Create dataset and dataloader
-train_ds = CacheDataset(data=data_dicts, transform=train_transforms, cache_rate=1.0, num_workers=4)
-train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=4)  # Reduced batch size
 
-# Initialize TensorBoard writer
-writer = SummaryWriter()
+class LUConv(nn.Module):
+    def __init__(self, nchan, elu):
+        super(LUConv, self).__init__()
+        self.relu1 = ELUCons(elu, nchan)
+        self.conv1 = nn.Conv3d(nchan, nchan, kernel_size=5, padding=2)
+        self.bn1 = ContBatchNorm3d(nchan)
 
-# Define the model
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device {device}")
-model = VNet(spatial_dims=3, in_channels=4, out_channels=1).to(device)
+    def forward(self, x):
+        out = self.relu1(self.bn1(self.conv1(x)))
+        return out
 
-# Define the loss function and optimizer
-loss_function = DiceLoss(sigmoid=True)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-# Training loop
-num_epochs = 2
+def _make_nConv(nchan, depth, elu):
+    layers = []
+    for _ in range(depth):
+        layers.append(LUConv(nchan, elu))
+    return nn.Sequential(*layers)
 
-for epoch in range(num_epochs):
-    model.train()
-    epoch_loss = 0
 
-    for batch_idx, batch_data in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}")):
-        inputs, labels = batch_data["image"].to(device), batch_data["label"].to(device)
+class InputTransition(nn.Module):
+    def __init__(self, outChans, elu):
+        super(InputTransition, self).__init__()
+        self.conv1 = nn.Conv3d(4, 16, kernel_size=5, padding=2)  # Adjusted for 4 input channels
+        self.bn1 = ContBatchNorm3d(16)
+        self.relu1 = ELUCons(elu, 16)
 
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = loss_function(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        epoch_loss += loss.item()
+    def forward(self, x):
+        out = self.bn1(self.conv1(x))
+        x16 = torch.cat([x] * 4, 1)  # Adjusted for 4 input channels
+        out = self.relu1(torch.add(out, x16))
+        return out
 
-        # Log loss to TensorBoard
-        writer.add_scalar("Training Loss", loss.item(), epoch * len(train_loader) + batch_idx)
 
-        if batch_idx % 10 == 0:
-            print(f"Epoch {epoch + 1}/{num_epochs}, Batch {batch_idx + 1}/{len(train_loader)}, Loss: {loss.item()}")
+class DownTransition(nn.Module):
+    def __init__(self, inChans, nConvs, elu, dropout=False):
+        super(DownTransition, self).__init__()
+        outChans = 2 * inChans
+        self.down_conv = nn.Conv3d(inChans, outChans, kernel_size=2, stride=2)
+        self.bn1 = ContBatchNorm3d(outChans)
+        self.do1 = passthrough
+        self.relu1 = ELUCons(elu, outChans)
+        self.relu2 = ELUCons(elu, outChans)
+        if dropout:
+            self.do1 = nn.Dropout3d()
+        self.ops = _make_nConv(outChans, nConvs, elu)
 
-    # Log average loss per epoch to TensorBoard
-    writer.add_scalar("Average Loss per Epoch", epoch_loss / len(train_loader), epoch)
+    def forward(self, x):
+        down = self.relu1(self.bn1(self.down_conv(x)))
+        out = self.do1(down)
+        out = self.ops(out)
+        out = self.relu2(torch.add(out, down))
+        return out
 
-    print(f"Epoch {epoch + 1}/{num_epochs} completed. Average Loss: {epoch_loss / len(train_loader)}")
 
-print("Training Complete")
-torch.save(model.state_dict(), "vnet_model.pth")
+class UpTransition(nn.Module):
+    def __init__(self, inChans, outChans, nConvs, elu, dropout=False):
+        super(UpTransition, self).__init__()
+        self.up_conv = nn.ConvTranspose3d(inChans, outChans // 2, kernel_size=2, stride=2)
+        self.bn1 = ContBatchNorm3d(outChans // 2)
+        self.do1 = passthrough
+        self.do2 = nn.Dropout3d()
+        self.relu1 = ELUCons(elu, outChans // 2)
+        self.relu2 = ELUCons(elu, outChans)
+        if dropout:
+            self.do1 = nn.Dropout3d()
+        self.ops = _make_nConv(outChans, nConvs, elu)
 
-# Close the TensorBoard writer
-writer.close()
+    def forward(self, x, skipx):
+        out = self.do1(x)
+        skipxdo = self.do2(skipx)
+        out = self.relu1(self.bn1(self.up_conv(out)))
+
+        # Ensure the dimensions match before concatenation
+        if out.shape != skipxdo.shape:
+            diff_depth = skipxdo.size(2) - out.size(2)
+            diff_height = skipxdo.size(3) - out.size(3)
+            diff_width = skipxdo.size(4) - out.size(4)
+            out = F.pad(out, [diff_width // 2, diff_width - diff_width // 2,
+                              diff_height // 2, diff_height - diff_height // 2,
+                              diff_depth // 2, diff_depth - diff_depth // 2])
+
+        xcat = torch.cat((out, skipxdo), 1)
+        out = self.ops(xcat)
+        out = self.relu2(torch.add(out, xcat))
+        return out
+
+
+class OutputTransition(nn.Module):
+    def __init__(self, inChans, elu):
+        super(OutputTransition, self).__init__()
+        self.conv1 = nn.Conv3d(inChans, 5, kernel_size=5, padding=2)  # Adjusted for 5 output channels
+        self.bn1 = ContBatchNorm3d(5)
+        self.relu1 = ELUCons(elu, 5)
+        self.conv2 = nn.Conv3d(5, 5, kernel_size=1)  # Adjusted for 5 output channels
+        self.softmax = nn.Softmax(dim=1)  # Use softmax for multi-class segmentation
+
+    def forward(self, x):
+        out = self.relu1(self.bn1(self.conv1(x)))
+        out = self.conv2(out)
+        out = self.softmax(out)  # Softmax across the channel dimension
+        return out
+
+
+class VNet(nn.Module):
+    def __init__(self, elu=True, nll=False):
+        super(VNet, self).__init__()
+        self.in_tr = InputTransition(16, elu)
+        self.down_tr32 = DownTransition(16, 1, elu)
+        self.down_tr64 = DownTransition(32, 2, elu)
+        self.down_tr128 = DownTransition(64, 3, elu, dropout=True)
+        self.down_tr256 = DownTransition(128, 2, elu, dropout=True)
+        self.up_tr256 = UpTransition(256, 256, 2, elu, dropout=True)
+        self.up_tr128 = UpTransition(256, 128, 2, elu, dropout=True)
+        self.up_tr64 = UpTransition(128, 64, 1, elu)
+        self.up_tr32 = UpTransition(64, 32, 1, elu)
+        self.out_tr = OutputTransition(32, elu)
+
+    def forward(self, x):
+        out16 = self.in_tr(x)
+        out32 = self.down_tr32(out16)
+        out64 = self.down_tr64(out32)
+        out128 = self.down_tr128(out64)
+        out256 = self.down_tr256(out128)
+        out = self.up_tr256(out256, out128)
+        out = self.up_tr128(out, out64)
+        out = self.up_tr64(out, out32)
+        out = self.up_tr32(out, out16)
+        out = self.out_tr(out)
+        return out
