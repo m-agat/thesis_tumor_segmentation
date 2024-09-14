@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .thesis_env/
+.azureml-env/
 BraTS2024-BraTS-GLI-TrainingData/
 BraTS2024-BraTS-GLI-ValidationData/
 OLDBraTS2024-BraTS-GLI-ValidationData/
@@ -10,6 +11,7 @@ conf/
 checkpoints/
 *.pth
 *.yaml
+.amlignore
 
 nnUNet_raw/
 nnUNet_preprocessed/

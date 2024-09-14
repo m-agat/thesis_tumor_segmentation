@@ -23,6 +23,17 @@ from functools import partial
 import yaml
 from torch.cuda.amp import autocast, GradScaler 
 import argparse
+from azureml.core.run import Run
+import subprocess 
+
+if "AZUREML" in os.environ:
+    subprocess.run(["pip", "install", "albumentations==1.4.12", "medpy==0.5.2"])
+
+run = Run.get_context()
+
+# Check if we are running on Azure ML
+is_azure = run.id != "offline"
+
 
 # Configure logger
 logging.basicConfig(level=logging.INFO)
@@ -81,7 +92,13 @@ def train_epoch(model, train_loader, optimizer, loss_func, device, scaler, accum
             optimizer.zero_grad()
 
         total_loss += loss.item()
+
     avg_loss = total_loss / len(train_loader)
+    
+    # Log the training loss only if running on Azure
+    if run.id != "offline":
+        run.log("Training Loss", avg_loss)
+
     return avg_loss
 
 
@@ -98,13 +115,22 @@ def validate(model, val_loader, acc_func, model_inferer, post_sigmoid, post_pred
             acc_func(y_pred=outputs, y=labels)
 
     avg_acc = acc_func.aggregate().item()
-    
+
+    # Log validation Dice only if running on Azure
+    if run.id != "offline":
+        run.log("Validation Dice", avg_acc)
+
     torch.cuda.empty_cache()
 
     return avg_acc
 
 # Train and validate the model
-def train_and_validate(cfg, checkpoint_path=None):
+def train_and_validate(cfg, checkpoint_path=None, train_data=None, val_data=None):
+    if is_azure:
+        cfg['data']['train_dir'] = train_data
+        cfg['data']['val_dir'] = val_data
+        cfg['training']['checkpoint_dir'] = '/outputs/checkpoints'
+
     # Initialize random seeds and configure device
     print("Initializing random seed and device...")
     init_random(seed=cfg['training']['seed'])
