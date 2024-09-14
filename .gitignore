@@ -6,6 +6,10 @@ __pycache__/
 BraTS2024-BraTS-GLI-TrainingData/
 BraTS2024-BraTS-GLI-ValidationData/
 OLDBraTS2024-BraTS-GLI-ValidationData/
+conf/
+checkpoints/
+*.pth
+*.yaml
 
 nnUNet_raw/
 nnUNet_preprocessed/
@@ -21,6 +25,12 @@ runs/
 VNet_predictions/
 VNet_predictions_png/
 vnet_model.pth
+
+*.png
+*.jpg
+*.nii.gz
+/data
+
 
 # C extensions
 *.so

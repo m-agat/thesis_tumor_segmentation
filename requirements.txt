@@ -1,7 +1,0 @@
-imageio==2.34.2
-matplotlib==3.9.1
-nibabel==5.2.1
-nilearn==0.10.4
-numpy==2.0.0
-scipy==1.14.0
-torch==2.3.1
