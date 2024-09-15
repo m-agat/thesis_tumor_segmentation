@@ -10,7 +10,6 @@ OLDBraTS2024-BraTS-GLI-ValidationData/
 conf/config.json
 checkpoints/
 *.pth
-.amlignore
 
 nnUNet_raw/
 nnUNet_preprocessed/
