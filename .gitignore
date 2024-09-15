@@ -7,11 +7,9 @@ __pycache__/
 BraTS2024-BraTS-GLI-TrainingData/
 BraTS2024-BraTS-GLI-ValidationData/
 OLDBraTS2024-BraTS-GLI-ValidationData/
-conf/
+conf/config.json
 checkpoints/
 *.pth
-*.yaml
-.amlignore
 
 nnUNet_raw/
 nnUNet_preprocessed/
