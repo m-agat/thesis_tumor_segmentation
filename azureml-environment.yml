@@ -1,0 +1,14 @@
+name: my_custom_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9  # You can specify the Python version here
+  - pip
+  - numpy=1.23.5  # Use a compatible version with azureml-dataset-runtime
+  - pip:
+    - azureml-dataset-runtime==1.56.0  # Try an earlier version to resolve the conflict
+    - azureml-core==1.56.0  # Optional: Use the same version of azureml-core
+    - medpy==0.5.2  # Add any other necessary dependencies here
+    - albumentations==1.4.12
+    - -r requirements_azure.txt  # Your requirements file
