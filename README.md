@@ -2,8 +2,52 @@
 
 ## **Automated Tumor Segmentation in MRI Neuroimaging - From Advanced AI techniques to Clinical Toolbox**
 
-This research proposal addresses the critical need for efficient and accurate tumor segmentation in neuroimaging, particularly utilizing Magnetic Resonance Imaging (MRI) data. The project aims to develop a robust and automated approach for tumor delineation. The proposed methodology integrates state-of-the-art MRI neuroimaging techniques with advanced artificial learning methods.
+# **Master Thesis 2024: Automated Tumor Segmentation in MRI Neuroimaging**
 
-The research plan involves acquiring and preprocessing a diverse dataset of MRI scans, encompassing various tumor types, sizes, and locations for automatic tumor segmentation. The core of the project lies in training and fine-tuning the developed model with AI using already segmented tumor dataset. Our approach will explore the integration of multi-modal MRI data, such as T1-weighted, T2-weighted, and FLAIR images, to capture complementary information and improve segmentation accuracy Then, we will generalize the model across other patients'cohort and imaging protocols.
+## **Project Title**: From Advanced AI Techniques to Clinical Toolbox
 
-Finally, to bridge the gap between research and clinical practice, the project will include the development of a user-friendly clinical toolbox to integrate the automated tumor segmentation algorithm in real world clinical scenarios.
+---
+
+### **Project Overview**
+
+This project focuses on developing an AI-driven tumor segmentation tool using MRI neuroimaging. The objective is to apply deep learning techniques to automate tumor detection and segmentation, aiming to create a clinical toolbox to assist in neuroimaging analysis for brain tumors.
+
+---
+
+### **Pipeline Overview**
+
+1. **Step 1: Preprocessing** (Completed)
+    - Includes skull stripping, normalization, and resizing MRI images for uniformity.
+    
+2. **Step 2: Model Training & Validation** (In Progress)
+    - Testing different models like 3D UNet, VNet, SegResNet, ResUNet++, and Attention UNet.
+    
+3. **Step 3: Model Evaluation & Optimization** (To Do)
+    - Evaluation using Dice scores and optimization for clinical application.
+
+---
+
+### **Data Structure**
+
+To run the project, organize the **BraTS 2024 Dataset** in the following folder structure under the `data/` directory:
+
+```plaintext
+BraTS2024-BraTS-GLI-TrainingData
+└── training_data1_v2
+    ├── BraTS-GLI-00005-100
+    │   ├── BraTS-GLI-00005-100-seg.nii.gz
+    │   ├── BraTS-GLI-00005-100-t1c.nii.gz
+    │   ├── BraTS-GLI-00005-100-t1n.nii.gz
+    │   ├── BraTS-GLI-00005-100-t2f.nii.gz
+    │   └── BraTS-GLI-00005-100-t2w.nii.gz
+    ├── BraTS-GLI-00005-101
+    └── ...
+    
+BraTS2024-BraTS-GLI-ValidationData
+└── validation_data
+    ├── BraTS-GLI-02073-100
+    │   ├── BraTS-GLI-02073-100-t1c.nii.gz
+    │   ├── BraTS-GLI-02073-100-t1n.nii.gz
+    │   ├── BraTS-GLI-02073-100-t2f.nii.gz
+    │   └── BraTS-GLI-02073-100-t2w.nii.gz
+    └── ...
