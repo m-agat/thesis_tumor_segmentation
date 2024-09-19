@@ -1,5 +1,7 @@
 import multiprocessing
 import shutil
+from multiprocessing import Pool
+
 import SimpleITK as sitk
 import numpy as np
 from batchgenerators.utilities.file_and_folder_operations import *
@@ -8,16 +10,18 @@ from nnunetv2.paths import nnUNet_raw
 
 
 def copy_BraTS_segmentation_and_convert_labels_to_nnUNet(in_file: str, out_file: str) -> None:
+    # use this for segmentation only!!!
+    # nnUNet wants the labels to be continuous. BraTS is 0, 1, 2, 4 -> we make that into 0, 1, 2, 3
     img = sitk.ReadImage(in_file)
     img_npy = sitk.GetArrayFromImage(img)
 
     uniques = np.unique(img_npy)
     for u in uniques:
-        if u not in [0, 1, 2, 3]:  # We will change this to [0, 1, 2, 3] later
+        if u not in [0, 1, 2, 4]:
             raise RuntimeError('unexpected label')
 
     seg_new = np.zeros_like(img_npy)
-    seg_new[img_npy == 3] = 3  # In BraTS 2023, there is no label 4, adjust this
+    seg_new[img_npy == 4] = 3
     seg_new[img_npy == 2] = 1
     seg_new[img_npy == 1] = 2
     img_corr = sitk.GetImageFromArray(seg_new)
@@ -28,7 +32,7 @@ def copy_BraTS_segmentation_and_convert_labels_to_nnUNet(in_file: str, out_file:
 def convert_labels_back_to_BraTS(seg: np.ndarray):
     new_seg = np.zeros_like(seg)
     new_seg[seg == 1] = 2
-    new_seg[seg == 3] = 3  # Change this back to 3 for BraTS 2023
+    new_seg[seg == 3] = 4
     new_seg[seg == 2] = 1
     return new_seg
 
@@ -43,7 +47,9 @@ def load_convert_labels_back_to_BraTS(filename, input_folder, output_folder):
 
 
 def convert_folder_with_preds_back_to_BraTS_labeling_convention(input_folder: str, output_folder: str, num_processes: int = 12):
-    # Converts prediction labels back to BraTS convention (i.e., 0, 1, 2, 3)
+    """
+    reads all prediction files (nifti) in the input folder, converts the labels back to BraTS convention and saves the
+    """
     maybe_mkdir_p(output_folder)
     nii = subfiles(input_folder, suffix='.nii.gz', join=False)
     with multiprocessing.get_context("spawn").Pool(num_processes) as p:
@@ -51,14 +57,14 @@ def convert_folder_with_preds_back_to_BraTS_labeling_convention(input_folder: st
 
 
 if __name__ == '__main__':
-    brats_data_dir = '/home/agata/Desktop/thesis_tumor_segmentation/data/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData'
+    brats_data_dir = '/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/TrainingData'
 
-    task_id = 100
-    task_name = "BraTS2023"
+    task_id = 101
+    task_name = "BraTS2021"
 
     foldername = "Dataset%03.0d_%s" % (task_id, task_name)
 
-    # Setting up nnU-Net folders
+    # setting up nnU-Net folders
     out_base = join(nnUNet_raw, foldername)
     imagestr = join(out_base, "imagesTr")
     labelstr = join(out_base, "labelsTr")
@@ -68,22 +74,21 @@ if __name__ == '__main__':
     case_ids = subdirs(brats_data_dir, prefix='BraTS', join=False)
 
     for c in case_ids:
-        # Modify file names according to your dataset (t1n, t1c, t2w, t2f)
-        shutil.copy(join(brats_data_dir, c, c + "-t1n.nii.gz"), join(imagestr, c + '_0000.nii.gz'))
-        shutil.copy(join(brats_data_dir, c, c + "-t1c.nii.gz"), join(imagestr, c + '_0001.nii.gz'))
-        shutil.copy(join(brats_data_dir, c, c + "-t2w.nii.gz"), join(imagestr, c + '_0002.nii.gz'))
-        shutil.copy(join(brats_data_dir, c, c + "-t2f.nii.gz"), join(imagestr, c + '_0003.nii.gz'))
+        shutil.copy(join(brats_data_dir, c, c + "_t1.nii.gz"), join(imagestr, c + '_0000.nii.gz'))
+        shutil.copy(join(brats_data_dir, c, c + "_t1ce.nii.gz"), join(imagestr, c + '_0001.nii.gz'))
+        shutil.copy(join(brats_data_dir, c, c + "_t2.nii.gz"), join(imagestr, c + '_0002.nii.gz'))
+        shutil.copy(join(brats_data_dir, c, c + "_flair.nii.gz"), join(imagestr, c + '_0003.nii.gz'))
 
-        copy_BraTS_segmentation_and_convert_labels_to_nnUNet(join(brats_data_dir, c, c + "-seg.nii.gz"),
+        copy_BraTS_segmentation_and_convert_labels_to_nnUNet(join(brats_data_dir, c, c + "_seg.nii.gz"),
                                                              join(labelstr, c + '.nii.gz'))
 
     generate_dataset_json(out_base,
-                          channel_names={0: 'T1n', 1: 'T1c', 2: 'T2w', 3: 'T2f'},
+                          channel_names={0: 'T1', 1: 'T1ce', 2: 'T2', 3: 'Flair'},
                           labels={
                               'background': 0,
-                              'whole tumor': (1, 2, 3),
-                              'tumor core': (2, 3),
-                              'enhancing tumor': (3,)
+                              'edema': 1,
+                              'non-enhancing tumor': 2,
+                              'enhancing tumor': 3
                           },
                           num_training_cases=len(case_ids),
                           file_ending='.nii.gz',
