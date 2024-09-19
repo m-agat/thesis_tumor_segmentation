@@ -3,34 +3,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 .thesis_env/
-.azureml-env/
-BraTS2024-BraTS-GLI-TrainingData/
-BraTS2024-BraTS-GLI-ValidationData/
-OLDBraTS2024-BraTS-GLI-ValidationData/
-conf/config.json
-checkpoints/
 *.pth
 
-nnUNet_raw/
-nnUNet_preprocessed/
-nnUNet_results/
-nnUNet_predictions/
 nnUNet_postprocessed/
-nnUNet_val_slice_images/
-
-UNet_predictions/
-unet_model.pth
-runs/
-
-VNet_predictions/
-VNet_predictions_png/
-vnet_model.pth
+nnUNet_predictions
+nnUNet_raw/
+nnUNet_results/
+nnUNet_preprocessed/
+results/
+data/ 
+notes.txt
 
 *.png
 *.jpg
 *.nii.gz
 *.pt
-/data
 
 
 # C extensions
