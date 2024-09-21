@@ -12,7 +12,6 @@ nnUNet_results/
 nnUNet_preprocessed/
 results/
 data/ 
-notes.txt
 
 *.png
 *.jpg
