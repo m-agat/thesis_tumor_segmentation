@@ -12,6 +12,7 @@ nnUNet_results/
 nnUNet_preprocessed/
 results/
 data/ 
+figures/
 
 *.png
 *.jpg
