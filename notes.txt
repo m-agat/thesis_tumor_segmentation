@@ -1,5 +1,4 @@
 TODO:
-- uncertainty: how much the predictions differ from the ground truth 
 - weight the different models when computing uncertainty
 - we need to know whether one model is better for one tissue type than another (and modalities)
 - read about how you could include the uncertainty 
@@ -7,5 +6,5 @@ TODO:
 DONE:
 - convert the segmentations to nifti files 
 - get matlab 
-
+- uncertainty: how much the predictions differ from the ground truth 
 
