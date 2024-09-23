@@ -58,5 +58,5 @@ def generate_filtered_folder_structure(start_path, prefix="", max_files_per_fold
         print(f"{prefix}└── ...")
 
 # Path to the directory where your dataset folder is stored
-dataset_directory = "/home/agata/Desktop/thesis_tumor_segmentation"
+dataset_directory = "/home/agata/Desktop/thesis_tumor_segmentation/results"
 generate_filtered_folder_structure(dataset_directory)
