@@ -3,6 +3,7 @@ import numpy as np
 from functools import partial
 from monai.inferers import sliding_window_inference
 import os 
+from src.metrics import compute_dice_score
 
 def load_models(device, results_dir):
     """
@@ -41,7 +42,6 @@ def load_models(device, results_dir):
         dropout=0.0                       
     )
 
-
     vnet_model = VNet(
         spatial_dims=3, 
         in_channels=4,   
@@ -63,7 +63,7 @@ def load_models(device, results_dir):
     
     return models
 
-def get_segmentation(model, roi, test_loader, overlap=0.6):
+def get_segmentation(model, roi, test_loader, overlap=0.6, device="cuda"):
     """
     Perform segmentation using sliding window inference.
     """
@@ -77,7 +77,7 @@ def get_segmentation(model, roi, test_loader, overlap=0.6):
 
     with torch.no_grad():
         for batch_data in test_loader:
-            image = batch_data["image"].cuda()
+            image = batch_data["image"].to(device)
             prob = torch.sigmoid(model_inferer(image))
             seg = prob[0].detach().cpu().numpy()
             seg = (seg > 0.5).astype(np.int8)
@@ -104,7 +104,7 @@ def adjust_uncertainty_by_accuracy(uncertainty_map, accuracy_map):
 def get_ensemble_segmentation_with_uncertainty(models, test_loader, roi, ground_truth, nnunet_segmentation_result, overlap=0.6):
     """
     Perform ensemble segmentation and compute uncertainty based on prediction variance
-    and comparison to ground truth for multi-class segmentation.
+    and Dice score for multi-class segmentation.
     This version respects the multi-class nature of BraTS labels.
     """
     # Initialize a list to store all model predictions
@@ -133,13 +133,21 @@ def get_ensemble_segmentation_with_uncertainty(models, test_loader, roi, ground_
     # Get final segmentation by taking the argmax over the class dimension (i.e., the most confident class for each voxel)
     final_segmentation = np.argmax(ensemble_class_preds, axis=0)
 
-    # Calculate uncertainty based on the variance of predictions for each class
-    uncertainty_map = np.var(all_preds, axis=0)
+    # Calculate variance-based uncertainty based on the variance of predictions for each class
+    variance_uncertainty_map = np.var(all_preds, axis=0)
+
+    # Calculate Dice score-based uncertainty
+    dice_uncertainty_map = np.zeros_like(final_segmentation, dtype=np.float32)
+    for class_idx in range(num_classes):
+        # Get Dice uncertainty for each class
+        dice_score = compute_dice_score(final_segmentation == class_idx, ground_truth == class_idx)
+        dice_uncertainty_map[final_segmentation == class_idx] = 1 - dice_score
 
     # Compare to ground truth and calculate accuracy map
     accuracy_map = compare_predictions_to_ground_truth(final_segmentation, ground_truth)
 
-    # Adjust uncertainty based on accuracy
-    adjusted_uncertainty = adjust_uncertainty_by_accuracy(uncertainty_map, accuracy_map)
+    # Adjust variance-based uncertainty based on accuracy
+    adjusted_variance_uncertainty = adjust_uncertainty_by_accuracy(variance_uncertainty_map, accuracy_map)
 
-    return final_segmentation, adjusted_uncertainty
+    # Return the final segmentation along with both uncertainty maps
+    return final_segmentation, adjusted_variance_uncertainty, dice_uncertainty_map
