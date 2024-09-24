@@ -20,7 +20,7 @@ def process_case(case_num, data_dir, results_dir, models, device):
     ground_truth_path = os.path.join(data_dir, f"BraTS2021_{case_num}", f"BraTS2021_{case_num}_seg.nii.gz")
     ground_truth = nib.load(ground_truth_path).get_fdata()
 
-    segmentation, adjusted_uncertainty = get_ensemble_segmentation_with_uncertainty(
+    segmentation, variance_uncertainty, dice_uncertainty = get_ensemble_segmentation_with_uncertainty(
         models, test_loader, roi=(96, 96, 96), ground_truth=ground_truth, nnunet_segmentation_result=nnunet_segmentation_result
     )
 
@@ -32,12 +32,13 @@ def process_case(case_num, data_dir, results_dir, models, device):
     slice_num = 68
 
     plot_segmentation_with_accuracy_and_uncertainty(
-        img, ground_truth, segmentation, accuracy_map, adjusted_uncertainty, slice_num, 
+        img, ground_truth, segmentation, accuracy_map, variance_uncertainty, dice_uncertainty, slice_num, 
         save_path=f"./figures/{case_num}_segmentation_plot.png"
     )
 
     case_folder = create_case_folder(results_dir, case_num)
     save_segmentation_as_nifti(segmentation, img_path, os.path.join(case_folder, f"{case_num}_ensemble_segmentation.nii.gz"))
+
 
 def main():
     root_dir = os.getcwd()
@@ -50,7 +51,7 @@ def main():
     case_nums = [case.split('_')[-1] for case in case_dirs]
     
     case_nums = sorted(case_nums)
-    case_nums = case_nums[:20]
+    case_nums = case_nums[:10]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     models = load_models(device, results_dir)

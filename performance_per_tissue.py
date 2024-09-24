@@ -5,7 +5,7 @@ import pandas as pd
 import nibabel as nib
 from src.data_loading import load_test_data
 from src.model_inference import load_models, get_segmentation
-from src.metrics import compute_dice_score
+from src.metrics import compute_dice_score_per_tissue
 
 
 def process_case(case_num, data_dir, results_dir, models, device):
@@ -34,10 +34,10 @@ def process_case(case_num, data_dir, results_dir, models, device):
 
         # Compute Dice scores for each tissue type (NCR, ED, ET)
         for tissue_type in [1, 2, 3]:
-            dice_scores[model_name][tissue_type] = compute_dice_score(segmentation, ground_truth, tissue_type)
+            dice_scores[model_name][tissue_type] = compute_dice_score_per_tissue(segmentation, ground_truth, tissue_type)
 
     for tissue_type in [1, 2, 3]:
-        dice_scores['nnUNet'][tissue_type] = compute_dice_score(nnunet_segmentation_result, ground_truth, tissue_type)
+        dice_scores['nnUNet'][tissue_type] = compute_dice_score_per_tissue(nnunet_segmentation_result, ground_truth, tissue_type)
 
     print(f"Dice scores for case {case_num}: {dice_scores}")
 
