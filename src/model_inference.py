@@ -63,7 +63,7 @@ def load_models(device, results_dir):
     
     return models
 
-def get_segmentation(model, roi, test_loader, overlap=0.6):
+def get_segmentation(model, roi, test_loader, overlap=0.6, device="cuda"):
     """
     Perform segmentation using sliding window inference.
     """
@@ -77,7 +77,7 @@ def get_segmentation(model, roi, test_loader, overlap=0.6):
 
     with torch.no_grad():
         for batch_data in test_loader:
-            image = batch_data["image"].cuda()
+            image = batch_data["image"].to(device)
             prob = torch.sigmoid(model_inferer(image))
             seg = prob[0].detach().cpu().numpy()
             seg = (seg > 0.5).astype(np.int8)
