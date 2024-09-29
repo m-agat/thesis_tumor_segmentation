@@ -1,9 +1,12 @@
 TODO:
 - weight the different models when computing uncertainty
 - read about how you could include the uncertainty 
+- split the overlay for each tissue
+- overall uncertainty and uncertainty per tissue type 
 
 DONE:
 - convert the segmentations to nifti files 
 - get matlab 
 - uncertainty: how much the predictions differ from the ground truth 
 - we need to know whether one model is better for one tissue type than another (and modalities)
+- spm12, cut12
