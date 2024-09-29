@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd 
+
 
 def compute_dice_score(prediction, ground_truth):
     """
@@ -43,3 +45,17 @@ def compute_model_weights(dice_scores):
     if total_score == 0:
         return np.ones(len(dice_scores)) / len(dice_scores)  # If no dice score, equal weights
     return dice_scores / total_score  # Normalize so that weights sum to 1
+
+def load_dice_scores(csv_path):
+    """
+    Load dice scores from a CSV file and return them as normalized weights.
+    The weights will sum up to 1.
+    """
+    dice_scores_df = pd.read_csv(csv_path)
+    
+    dice_scores = dict(zip(dice_scores_df['Model'], dice_scores_df['Average Dice Score']))
+    
+    total_score = sum(dice_scores.values())
+    weights = {model: score / total_score for model, score in dice_scores.items()}
+    
+    return weights

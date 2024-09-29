@@ -4,7 +4,6 @@ from functools import partial
 from monai.inferers import sliding_window_inference
 import os 
 from src.metrics import compute_dice_score
-from src.utils import resample_to_shape
 
 def load_models(device, results_dir):
     """
@@ -105,10 +104,9 @@ def get_segmentation_softmax(model, roi, test_loader, overlap=0.6, device="cuda"
     with torch.no_grad():
         for batch_data in test_loader:
             image = batch_data["image"].to(device)
-            prob = torch.softmax(model_inferer(image), dim=1)  # Use softmax for multi-class
+            prob = torch.softmax(model_inferer(image), dim=1) 
             seg = prob.detach().cpu().numpy()
 
-    # Return the soft predictions (probabilities for each class)
     return seg
 
 def compare_predictions_to_ground_truth(prediction, ground_truth):
@@ -130,116 +128,91 @@ def get_ensemble_segmentation_with_uncertainty(models, test_loader, roi, ground_
     Perform ensemble segmentation and compute uncertainty based on prediction variance
     and Dice score for multi-class segmentation.
     """
-    # Initialize a list to store all model predictions
     all_preds = []
 
-    # Loop through the models and get segmentation predictions, including nnUNet
     for model_name, model in models.items():
         if model_name == 'nnUNet':
-            # nnUNet is a precomputed result, so we use it directly
             seg_out = model
         else:
-            # Other models are Torch models and need to run inference
             seg_out = get_segmentation(model, roi, test_loader, overlap)
 
         all_preds.append(seg_out)
 
-    # Convert predictions to a NumPy array of shape [num_models, H, W, D] (for each class)
+    # shape [num_models, H, W, D] (for each class)
     all_preds = np.array(all_preds)
 
-    # Calculate mean prediction for each voxel for each class
     num_classes = 5
     ensemble_class_preds = np.zeros((num_classes,) + all_preds[0].shape)  # Shape: (num_classes, H, W, D)
 
-    # For each class, calculate the mean prediction over all models for that class
     for class_idx in range(num_classes):
         # Calculate mean probability for each class
         ensemble_class_preds[class_idx] = np.mean(all_preds == class_idx, axis=0)
 
-    # Get final segmentation by taking the argmax over the class dimension (i.e., the most confident class for each voxel)
+    # argmax over the class dimension (i.e., the most confident class for each voxel)
     final_segmentation = np.argmax(ensemble_class_preds, axis=0)
 
-    # Calculate variance-based uncertainty based on the variance of predictions for each class
+    # variance-based uncertainty based on the variance of predictions for each class
     variance_uncertainty_map = np.var(all_preds, axis=0)
 
-    # Calculate Dice score-based uncertainty
+    # Dice score-based uncertainty
     dice_uncertainty_map = np.zeros_like(final_segmentation, dtype=np.float32)
     for class_idx in range(num_classes):
-        # Get Dice uncertainty for each class
         dice_score = compute_dice_score(final_segmentation == class_idx, ground_truth == class_idx)
         dice_uncertainty_map[final_segmentation == class_idx] = 1 - dice_score
 
     # Compare to ground truth and calculate accuracy map
     accuracy_map = compare_predictions_to_ground_truth(final_segmentation, ground_truth)
 
-    # Adjust variance-based uncertainty based on accuracy
     adjusted_variance_uncertainty = adjust_uncertainty_by_accuracy(variance_uncertainty_map, accuracy_map)
 
-    # Return the final segmentation along with both uncertainty maps
     return final_segmentation, adjusted_variance_uncertainty, dice_uncertainty_map
 
-def get_weighted_ensemble_segmentation_with_uncertainty(models, test_loader, roi, ground_truth, model_dice_scores, overlap=0.6, num_classes=3):
+
+def get_weighted_ensemble_segmentation_with_uncertainty(models, test_loader, roi, ground_truth, overlap=0.6, weights=None):
     """
-    Perform weighted ensemble segmentation with uncertainty based on model accuracy (Dice scores).
-    Each model's prediction is weighted by its performance.
+    Perform ensemble segmentation with model weighting based on Dice scores,
+    and compute uncertainty based on prediction variance and Dice score for multi-class segmentation.
     """
     all_preds = []
-    total_weight = 0
 
-    # Define the target shape for resampling
-    target_shape = None
-
-    # Loop through the models and get segmentation predictions
     for model_name, model in models.items():
-        weight = model_dice_scores.get(model_name, 1.0)  # Default weight if not found
-
         if model_name == 'nnUNet':
-            # nnUNet is a precomputed segmentation result, reshape to (3, H, W, D)
-            # Assuming that nnUNet already produces a segmentation map, split it into 3 binary maps for each class
-            seg_out = np.zeros((num_classes,) + model.shape)  # Create empty array for 3 classes
-            seg_out[0] = (model == 1).astype(np.int8)  # Class 1
-            seg_out[1] = (model == 2).astype(np.int8)  # Class 2
-            seg_out[2] = (model == 4).astype(np.int8)  # Class 3
+            seg_out = model  # Use precomputed nnUNet segmentation
         else:
-            # Other models require inference with softmax
-            seg_out = get_segmentation_softmax(model, roi, test_loader, overlap)
+            seg_out = get_segmentation(model, roi, test_loader, overlap)
 
-        # Log the shape of the output before resampling
-        print(f"{model_name} output shape before resampling: {seg_out.shape}")
+        all_preds.append(seg_out)
 
-        # Set the target shape based on the first model (or the shape you want to resample to)
-        if target_shape is None:
-            target_shape = seg_out.shape[1:]  # Set the target shape to the shape of the first model's output
+    # Convert predictions to numpy arrays for easier processing
+    all_preds = np.array(all_preds)  # Shape: [num_models, H, W, D]
 
-        # Resample the segmentation to the target shape if needed
-        if seg_out.shape[1:] != target_shape:
-            seg_out = np.array([resample_to_shape(seg, target_shape) for seg in seg_out])
+    num_classes = 5  # Example: You can adjust based on your number of classes
+    ensemble_class_preds = np.zeros((num_classes,) + all_preds[0].shape)  # Shape: (num_classes, H, W, D)
 
-        # Log the shape after resampling
-        print(f"{model_name} output shape after resampling: {seg_out.shape}")
-
-        # Apply model's weight (Dice score) to the segmentation
-        weighted_seg = seg_out * weight
-        all_preds.append(weighted_seg)
-        total_weight += weight
-
-    # Stack predictions: resulting shape is [num_models, num_classes, H, W, D]
-    all_preds = np.stack(all_preds, axis=0)
-
-    # Initialize ensemble predictions for each class
-    ensemble_class_preds = np.zeros((num_classes,) + all_preds[0].shape[1:])  # Shape: (num_classes, H, W, D)
-
-    # For each class, calculate the weighted average prediction over all models for that class
+    # Compute weighted mean for each class across models
     for class_idx in range(num_classes):
-        ensemble_class_preds[class_idx] = np.sum(all_preds[:, class_idx, :, :, :], axis=0) / total_weight
+        weighted_sum = np.zeros_like(all_preds[0])
 
-    # Get final segmentation by taking the argmax over the class dimension
+        # Sum the weighted predictions for each class across models
+        for model_idx, pred in enumerate(all_preds):
+            if weights:
+                weighted_sum += (pred == class_idx) * weights[list(models.keys())[model_idx]]
+            else:
+                weighted_sum += (pred == class_idx)
+
+        # Normalize by sum of weights or number of models (for the unweighted case)
+        if weights:
+            ensemble_class_preds[class_idx] = weighted_sum / np.sum(list(weights.values()))
+        else:
+            ensemble_class_preds[class_idx] = weighted_sum / len(all_preds)
+
+    # Argmax over the class dimension (i.e., the most confident class for each voxel)
     final_segmentation = np.argmax(ensemble_class_preds, axis=0)
 
-    # Calculate variance-based uncertainty across the weighted predictions
+    # Variance-based uncertainty based on the variance of predictions for each class
     variance_uncertainty_map = np.var(all_preds, axis=0)
 
-    # Calculate Dice score-based uncertainty
+    # Dice score-based uncertainty
     dice_uncertainty_map = np.zeros_like(final_segmentation, dtype=np.float32)
     for class_idx in range(num_classes):
         dice_score = compute_dice_score(final_segmentation == class_idx, ground_truth == class_idx)
@@ -248,11 +221,12 @@ def get_weighted_ensemble_segmentation_with_uncertainty(models, test_loader, roi
     # Compare to ground truth and calculate accuracy map
     accuracy_map = compare_predictions_to_ground_truth(final_segmentation, ground_truth)
 
-    # Adjust variance-based uncertainty based on accuracy
     adjusted_variance_uncertainty = adjust_uncertainty_by_accuracy(variance_uncertainty_map, accuracy_map)
 
-    # Return the final segmentation along with both uncertainty maps
     return final_segmentation, adjusted_variance_uncertainty, dice_uncertainty_map
+
+
+
 
 
 

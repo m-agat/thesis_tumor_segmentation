@@ -57,9 +57,9 @@ def main():
     # Extract the case numbers from the directory names (e.g., BraTS2021_00000 -> 00000)
     case_nums = [case.split('_')[-1] for case in case_dirs]
     case_nums = sorted(case_nums)
-    case_nums = case_nums[:3]
+    case_nums = case_nums[:30]
 
-    device = torch.device("cpu")  
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     models = load_models(device, results_dir)
 
     # Initialize a dictionary to accumulate Dice scores across cases for each model
