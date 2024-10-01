@@ -24,8 +24,8 @@ def process_case(case_num, data_dir, results_dir, models, device):
     ground_truth_path = os.path.join(data_dir, f"BraTS2021_{case_num}", f"BraTS2021_{case_num}_seg.nii.gz")
     ground_truth = nib.load(ground_truth_path).get_fdata()
 
-    dice_scores = {model_name: {1: 0.0, 2: 0.0, 3: 0.0} for model_name in models.keys()}
-    dice_scores['nnUNet'] = {1: 0.0, 2: 0.0, 3: 0.0}  # Add nnUNet to dice_scores
+    dice_scores = {model_name: {0: 0.0, 1: 0.0, 2: 0.0, 4: 0.0} for model_name in models.keys()}
+    dice_scores['nnUNet'] = {0: 0.0, 1: 0.0, 2: 0.0, 4: 0.0}  
 
     roi = (96, 96, 96)
     
@@ -33,10 +33,10 @@ def process_case(case_num, data_dir, results_dir, models, device):
         segmentation = get_segmentation(model, roi, test_loader, overlap=0.6, device=device)
 
         # Compute Dice scores for each tissue type (NCR, ED, ET)
-        for tissue_type in [1, 2, 3]:
+        for tissue_type in [0, 1, 2, 4]:
             dice_scores[model_name][tissue_type] = compute_dice_score_per_tissue(segmentation, ground_truth, tissue_type)
 
-    for tissue_type in [1, 2, 3]:
+    for tissue_type in [0, 1, 2, 4]:
         dice_scores['nnUNet'][tissue_type] = compute_dice_score_per_tissue(nnunet_segmentation_result, ground_truth, tissue_type)
 
     print(f"Dice scores for case {case_num}: {dice_scores}")
@@ -57,9 +57,9 @@ def main():
     # Extract the case numbers from the directory names (e.g., BraTS2021_00000 -> 00000)
     case_nums = [case.split('_')[-1] for case in case_dirs]
     case_nums = sorted(case_nums)
-    case_nums = case_nums[:3]
+    case_nums = case_nums[:30]
 
-    device = torch.device("cpu")  
+    device = torch.device("cuda")  
     models = load_models(device, results_dir)
 
     results = []
@@ -69,19 +69,23 @@ def main():
         try:
             dice_scores = process_case(case_num, data_dir, results_dir, models, device)
             
+            # Transform the dice scores into the desired structure
             for model_name, scores in dice_scores.items():
-                for tissue_type, dice_score in scores.items():
-                    results.append({
-                        'Case': case_num,
-                        'Model': model_name,
-                        'Tissue Type': tissue_type,
-                        'Dice Score': dice_score
-                    })
+                results.append({
+                    'Model': model_name,
+                    'Background Dice': scores[0], # Dice score for background
+                    'NCR Dice': scores[1],  # Dice score for NCR
+                    'ED Dice': scores[2],   # Dice score for ED
+                    'ET Dice': scores[4],   # Dice score for ET
+                })
+            torch.cuda.empty_cache()
 
         except Exception as e:
             print(f"Error processing case {case_num}: {e}")
+            torch.cuda.empty_cache()
 
-    results_df = pd.DataFrame(results)
+    # Create a dataframe and aggregate results across cases
+    results_df = pd.DataFrame(results).groupby('Model').mean().reset_index()
 
     csv_path = os.path.join(model_comparison_dir, 'dice_scores_per_tissue.csv')
     results_df.to_csv(csv_path, index=False)
