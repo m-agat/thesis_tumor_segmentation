@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd 
+
 
 def compute_dice_score(prediction, ground_truth):
     """
@@ -33,3 +35,47 @@ def compute_dice_score_per_tissue(prediction, ground_truth, tissue_type):
         return 1.0  # If both prediction and ground truth have no pixels for this class, Dice is perfect.
     
     return (2.0 * intersection) / union
+
+def compute_model_weights(dice_scores):
+    """
+    Compute weights for each model based on their Dice scores.
+    Models with higher Dice scores receive higher weights.
+    """
+    total_score = np.sum(dice_scores)
+    if total_score == 0:
+        return np.ones(len(dice_scores)) / len(dice_scores)  # If no dice score, equal weights
+    return dice_scores / total_score  # Normalize so that weights sum to 1
+
+def load_dice_scores(csv_path):
+    """
+    Load dice scores from a CSV file and return them as normalized weights.
+    The weights will sum up to 1.
+    """
+    dice_scores_df = pd.read_csv(csv_path)
+    
+    dice_scores = dict(zip(dice_scores_df['Model'], dice_scores_df['Average Dice Score']))
+    
+    total_score = sum(dice_scores.values())
+    weights = {model: score / total_score for model, score in dice_scores.items()}
+    
+    return weights
+
+def load_per_tissue_dice_scores(csv_path):
+    """
+    Load per-tissue dice scores from a CSV file and return them as normalized exponential weights
+    for each tissue type.
+    """
+    dice_scores_df = pd.read_csv(csv_path)
+    
+    tissues = ['Background', 'NCR', 'ED', 'ET']
+    weights = {tissue: {} for tissue in tissues}
+    
+    for tissue in tissues:
+        exp_dice_scores = np.exp(dice_scores_df[f'{tissue} Dice']) # Exponential Dice Scores
+        total_exp_score = exp_dice_scores.sum()
+        scaling_factor = 4
+        for _, row in dice_scores_df.iterrows():
+            model = row['Model']
+            weights[tissue][model] = np.exp(row[f'{tissue} Dice'] * scaling_factor) / total_exp_score # Normalized Dice scores
+    
+    return weights
