@@ -6,7 +6,7 @@ from src.model_inference import load_models, get_weighted_ensemble_segmentation_
 from src.utils import create_case_folder, save_segmentation_as_nifti
 from src.visualization import plot_segmentation_with_accuracy_and_uncertainty
 from src.utils import csv_to_dict
-from src.metrics import load_dice_scores
+from src.metrics import load_per_tissue_dice_scores
 
 def process_case(case_num, data_dir, results_dir, models, device, model_weights):
     """
@@ -62,17 +62,19 @@ def main():
     case_dirs = [case for case in os.listdir(data_dir) if case.startswith("BraTS2021_")]
     case_nums = [case.split('_')[-1] for case in case_dirs]
     case_nums = sorted(case_nums)
-    case_nums = case_nums[:3]
+    case_nums = case_nums[:10]
+    # case_nums = ["00000"]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     models = load_models(device, results_dir)
-
     # Load the Dice scores from CSV and normalize them to create weights
-    dice_scores_csv = os.path.join(results_dir, "model_comparison/overall_dice_scores.csv")
-    model_weights = load_dice_scores(dice_scores_csv)
+    dice_scores_csv = os.path.join(results_dir, "model_comparison/dice_scores_per_tissue.csv")
+    model_weights = load_per_tissue_dice_scores(dice_scores_csv)
 
     for case_num in case_nums:
         print(f"Processing case: BraTS2021_{case_num}")
+        # process_case(case_num, data_dir, results_dir, models, device, model_weights)
+        # torch.cuda.empty_cache()
         try:
             process_case(case_num, data_dir, results_dir, models, device, model_weights)
             torch.cuda.empty_cache()
