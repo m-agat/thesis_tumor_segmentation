@@ -1,5 +1,4 @@
 TODO:
-- weight the different models when computing uncertainty
 - read about how you could include the uncertainty 
 - split the overlay for each tissue
 - overall uncertainty and uncertainty per tissue type 
@@ -10,3 +9,31 @@ DONE:
 - uncertainty: how much the predictions differ from the ground truth 
 - we need to know whether one model is better for one tissue type than another (and modalities)
 - spm12, cut12
+- weight the different models when computing uncertainty
+
+
+Notes & Issues:
+
+# Ensemble prediction
+The ensemble of models is now using majority voting to choose the label for the voxel. 
+In the majority voting a mode is utilized.
+This is because the outputs of the segmentation are hard labels not probabilities.
+
+# Wighted ensemble 
+The weighted ensemble uses two types of weights:
+1. dice score per model and per tissue
+2. class size: to reduce the impact of the larger classes e.g. background
+
+The weighted ensemble also uses majority voting but in a slightly different way.
+Instead of taking the mode like in the normal ensemble, we take the class
+with the highest total vote (np.argmax). This is because we now accumu;ate the WEIGHTED VOTES 
+So, after computing the total weighted votes for each class at each voxel, the class with the highest total vote.
+
+# Preprocessing new data 
+Some images are pixalated in saggital and coronal planes (e.g. MMPG)
+
+I tried to run predictions using an nnUNet on the new data, but some patients have fewer than 4 modalities 
+(e.g. only FLAIR and T1GAD) what made the inference impossible to make. 
+
+Show the nnUNet result on patient ARE
+
