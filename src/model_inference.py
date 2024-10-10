@@ -5,6 +5,10 @@ from monai.inferers import sliding_window_inference
 import os 
 from src.metrics import compute_dice_score
 from scipy import stats
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
 
 def load_models(device, results_dir):
     """
@@ -235,4 +239,3 @@ def get_weighted_ensemble_segmentation_with_uncertainty(models, test_loader, roi
     adjusted_variance_uncertainty = adjust_uncertainty_by_accuracy(variance_uncertainty_map, accuracy_map)
 
     return final_segmentation, adjusted_variance_uncertainty, dice_uncertainty_map
-
