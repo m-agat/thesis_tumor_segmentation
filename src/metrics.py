@@ -79,3 +79,22 @@ def load_per_tissue_dice_scores(csv_path):
             weights[tissue][model] = np.exp(row[f'{tissue} Dice'] * scaling_factor) / total_exp_score # Normalized Dice scores
     
     return weights
+
+
+def calculate_variance_based_certainty(predictions):
+    """
+    Calculate certainty for each voxel based on the variance of predictions across models.
+    
+    Parameters:
+    - predictions: Numpy array of predictions from different models, shape [num_models, H, W, D]
+    
+    Returns:
+    - certainty: Certainty score for each voxel (1 - variance)
+    """
+    # Calculate variance across the model predictions for each voxel
+    variance_map = np.var(predictions, axis=0)  # Variance across models at each voxel
+    
+    # Certainty is inversely related to variance (lower variance = higher certainty)
+    certainty = 1 - variance_map  # Certainty: 1 means high certainty, 0 means low certainty
+    
+    return certainty

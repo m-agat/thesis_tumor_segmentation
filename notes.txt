@@ -3,6 +3,9 @@ TODO:
 - split the overlay for each tissue
 - overall uncertainty and uncertainty per tissue type 
 
+- create mock missing modalities for new data
+- type of the tumor will affect the prediction 
+
 DONE:
 - convert the segmentations to nifti files 
 - get matlab 
@@ -10,7 +13,8 @@ DONE:
 - we need to know whether one model is better for one tissue type than another (and modalities)
 - spm12, cut12
 - weight the different models when computing uncertainty
-
+- schedule meeting with alfredo
+- run the preprocessing again but correctly
 
 Notes & Issues:
 
@@ -19,7 +23,7 @@ The ensemble of models is now using majority voting to choose the label for the 
 In the majority voting a mode is utilized.
 This is because the outputs of the segmentation are hard labels not probabilities.
 
-# Wighted ensemble 
+# Weighted ensemble 
 The weighted ensemble uses two types of weights:
 1. dice score per model and per tissue
 2. class size: to reduce the impact of the larger classes e.g. background

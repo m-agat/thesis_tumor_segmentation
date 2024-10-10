@@ -1,7 +1,7 @@
 import os
 import torch
 import nibabel as nib
-from src.data_loading import load_test_data
+from dataset.dataloaders import load_test_data
 from src.model_inference import load_models, get_weighted_ensemble_segmentation_with_uncertainty, compare_predictions_to_ground_truth
 from src.utils import create_case_folder, save_segmentation_as_nifti
 from src.visualization import plot_segmentation_with_accuracy_and_uncertainty
