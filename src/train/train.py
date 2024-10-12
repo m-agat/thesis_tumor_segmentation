@@ -1,15 +1,13 @@
 import torch
 import time
 import config
-import models.models as models  # Or any other model you're using
+import models.models as models 
 from losses import get_loss_function, dice_acc, post_softmax, post_pred
 from utils.utils import save_checkpoint, EarlyStopping
 from train_helpers import train_epoch, val_epoch
 import numpy as np
 from functools import partial
 from monai.inferers import sliding_window_inference
-from monai.handlers import EarlyStopHandler
-from monai.engines import SupervisedTrainer
 
 model = models.swinunetr_model
 filename = models.get_model_name(models.models_dict, model)
@@ -31,8 +29,8 @@ early_stopper = EarlyStopping(
     patience=10, 
     delta=0.001, 
     verbose=True, 
-    save_checkpoint_fn=save_checkpoint,  # Pass your save function here
-    filename="best_model.pt"
+    save_checkpoint_fn=save_checkpoint,  
+    filename=filename
 )
 
 # Main trainer function

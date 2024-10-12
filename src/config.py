@@ -1,5 +1,5 @@
 import os
-import dataset.dataloaders as dataloaders
+import dataset.dataloaders_binary as dataloaders_binary
 import torch 
 
 # Set the root directory 
@@ -17,4 +17,4 @@ sw_batch_size = 2
 infer_overlap = 0.5
 max_epochs = 100
 val_every = 10
-train_loader, val_loader = dataloaders.get_loader(batch_size, data_dir, train_folder, val_folder, global_roi, local_roi)
+train_loader, val_loader = dataloaders_binary.get_loader(batch_size, data_dir, train_folder, val_folder, global_roi, local_roi)

@@ -1,7 +1,7 @@
 import os
-from monai import transforms, data
-from transforms import get_global_transforms, get_local_transforms, get_val_transforms, get_test_transforms
-
+from monai import data
+from transforms import get_mc_transforms, get_mc_val_transforms, get_test_transforms
+import torch 
 
 def read_data_from_folders(train_folder, val_folder, basedir):
     """
@@ -29,49 +29,26 @@ def read_data_from_folders(train_folder, val_folder, basedir):
     return train_files, val_files
 
 
-def get_loader(batch_size, data_dir, train_folder, val_folder, global_roi, local_roi):
+def get_loader_multi_class(batch_size, data_dir, train_folder, val_folder, local_roi):
     """
-    Create data loaders for training with both global and local patches.
+    Create data loaders for the second stage, focusing on multi-class segmentation.
     """
     # Load train and validation files
     train_files, val_files = read_data_from_folders(train_folder, val_folder, data_dir)
 
-    # Get the transforms from transforms.py
-    global_transform = get_global_transforms(global_roi)
-    local_transform = get_local_transforms(local_roi)
-    val_transform = get_val_transforms()
+    # Get the global and local transforms for multi-class segmentation
+    train_transform = get_mc_transforms(local_roi)
+    val_transform = get_mc_val_transforms()
 
     # Create datasets with global and local patches
-    global_train_ds = data.Dataset(data=train_files, transform=global_transform)
-    local_train_ds = data.Dataset(data=train_files, transform=local_transform)
+    mc_train_ds = data.Dataset(data=train_files, transform=train_transform)
     val_ds = data.Dataset(data=val_files, transform=val_transform)
 
     # Create data loaders
-    global_train_loader = data.DataLoader(
-        global_train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=8,
-        pin_memory=True,
-    )
+    local_train_loader = data.DataLoader(mc_train_ds, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = data.DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=8, pin_memory=True)
 
-    local_train_loader = data.DataLoader(
-        local_train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=8,
-        pin_memory=True,
-    )
-
-    val_loader = data.DataLoader(
-        val_ds,
-        batch_size=1,
-        shuffle=False,
-        num_workers=8,
-        pin_memory=True,
-    )
-
-    return global_train_loader, local_train_loader, val_loader
+    return local_train_loader, val_loader
 
 
 def load_test_data(test_folder, data_dir, batch_size=1):
