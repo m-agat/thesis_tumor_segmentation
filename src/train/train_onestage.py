@@ -26,7 +26,7 @@ model_inferer = partial(
 )
 
 early_stopper = EarlyStopping(
-    patience=10, 
+    patience=20, 
     delta=0.001, 
     verbose=True, 
     save_checkpoint_fn=save_checkpoint,  

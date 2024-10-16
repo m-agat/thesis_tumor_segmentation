@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-import config
+import config.config as config
 
 def save_checkpoint(model, epoch, filename="model.pt", best_acc=0, dir_add=config.root_dir):
     state_dict = model.state_dict()
