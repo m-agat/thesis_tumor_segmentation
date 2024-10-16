@@ -18,6 +18,8 @@ figures/
 *.jpg
 *.nii.gz
 *.pt
+*.yml
+*.json
 
 
 # C extensions
