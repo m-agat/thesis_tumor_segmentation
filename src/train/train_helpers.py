@@ -16,7 +16,7 @@ def train_epoch(model, loader, optimizer, epoch, loss_func):
         optimizer.step()
         run_loss.update(loss.item(), n=config.batch_size)
         print(
-            f"Epoch {epoch}/{config.config.max_epochs} {idx}/{len(loader)}",
+            f"Epoch {epoch}/{config.max_epochs} {idx}/{len(loader)}",
             f"loss: {run_loss.avg:.4f}",
             f"time {time.time() - start_time:.2f}s",
         )
@@ -24,7 +24,6 @@ def train_epoch(model, loader, optimizer, epoch, loss_func):
     torch.cuda.empty_cache()
     return run_loss.avg
 
-# Validation epoch function with probability maps
 def val_epoch(model, loader, epoch, acc_func, model_inferer, post_activation, post_pred):
     model.eval()
     start_time = time.time()
@@ -34,20 +33,22 @@ def val_epoch(model, loader, epoch, acc_func, model_inferer, post_activation, po
         for idx, batch_data in enumerate(loader):
             data, target = batch_data["image"].to(config.device), batch_data["label"].to(config.device)
             logits = model_inferer(data)
-            val_labels_list = decollate_batch(target)
-            val_outputs_list = decollate_batch(logits)
-            
-            # Convert outputs to probability maps using softmax
+            # val_labels_list = decollate_batch(target)
+            # val_outputs_list = decollate_batch(logits)
+
+            val_labels_list = list(target)
+            val_outputs_list = list(logits)
+
             val_output_convert = [post_pred(post_activation(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
             
             acc_func.reset()
             acc_func(y_pred=val_output_convert, y=val_labels_list)
             acc, not_nans = acc_func.aggregate()
             run_acc.update(acc.cpu().numpy(), n=not_nans.cpu().numpy())
-            dice_tc, dice_wt, dice_et = run_acc.avg
+            _, dice_wt = run_acc.avg 
             print(
                 f"Val {epoch}/{config.max_epochs} {idx}/{len(loader)}",
-                f", dice_tc: {dice_tc}, dice_wt: {dice_wt}, dice_et: {dice_et}",
+                f", dice_wt: {dice_wt}",
                 f", time {time.time() - start_time:.2f}s",
             )
             start_time = time.time()
@@ -56,23 +57,18 @@ def val_epoch(model, loader, epoch, acc_func, model_inferer, post_activation, po
 
 
 def get_wt_predictions(model, data_loader, model_inferer):
-    model.eval()  # Set the model to evaluation mode
-    wt_predictions = []  # To store whole tumor predictions for all images
+    model.eval()  
+    wt_predictions = []  
 
-    with torch.no_grad():  # Disable gradient calculation
-        for batch in data_loader:  # Iterate over the batches from the data loader
-            # Assuming the batch contains a dictionary with 'image' as the input
-            inputs = batch['image'].to(model.device)  # Move inputs to the model's device (e.g., GPU)
+    with torch.no_grad():  
+        for batch in data_loader:  
+            inputs = batch['image'].to(config.device)  
 
-            # Use the model_inferer for inference
-            outputs = model_inferer(model, inputs)  # Apply the model inferer, could be sliding window or other
+            outputs = model_inferer(inputs)  
 
             # Extract the Whole Tumor (WT) class from the outputs
-            # Assuming the output format has logits or probabilities, and WT corresponds to class 1
-            wt_output = torch.argmax(outputs, dim=1)  # Get the class with the highest score
+            wt_output = torch.argmax(outputs, dim=1) 
 
-            # Post-processing if needed (for example, mapping to original size)
-            # Append predictions to list
-            wt_predictions.append(wt_output.cpu().numpy())  # Move to CPU and convert to numpy if needed
+            wt_predictions.append(wt_output.cpu().numpy())  
 
     return wt_predictions

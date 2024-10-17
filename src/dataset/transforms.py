@@ -3,11 +3,24 @@ import torch
 
 def prepare_wt_mask(label):
     """
-    Prepare a binary WT mask where all non-background labels are grouped into a single WT class.
+    Convert a multi-class label (with 3 channels: NCR, ED, ET) into a 2-channel mask.
+    Channel 0: Background (0 for tumor, 1 for background).
+    Channel 1: Whole tumor (1 for any tumor region, 0 for background).
     """
-    wt_mask = torch.zeros_like(label)
-    wt_mask[label > 0] = 1  # WT includes NCR, ED, ET (any non-background label is WT)
-    return wt_mask
+    wt_mask = (label > 0).float().max(dim=0, keepdim=False)[0]
+    background_mask = (label == 0).float().max(dim=0, keepdim=False)[0]
+    
+    # Combine into two-class mask
+    two_class_mask = torch.stack([background_mask, wt_mask], dim=0)
+
+    # Remove metadata if present
+    if hasattr(label, 'meta'):
+        two_class_mask.meta = label.meta
+        # Adjust metadata to reflect binary class structure
+        two_class_mask.meta['dim'] = [2, *two_class_mask.shape[1:]]
+        two_class_mask.meta['original_channel_dim'] = 0  # Or remove this key if no longer relevant
+
+    return two_class_mask
 
 
 def train_transform_wt_binary(global_roi):
@@ -15,6 +28,16 @@ def train_transform_wt_binary(global_roi):
         [
             transforms.LoadImaged(keys=["image", "label"]),
             transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+            transforms.CropForegroundd(
+                keys=["image", "label"],
+                source_key="image",
+                k_divisible=[global_roi[0], global_roi[1], global_roi[2]],
+            ),
+            transforms.RandSpatialCropd(
+                keys=["image", "label"],
+                roi_size=[global_roi[0], global_roi[1], global_roi[2]],
+                random_size=False,
+            ),
             transforms.Lambdad(keys="label", func=prepare_wt_mask),  # Prepare binary WT label
             transforms.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
             transforms.RandSpatialCropd(keys=["image", "label"], roi_size=global_roi, random_size=False),
@@ -25,7 +48,6 @@ def train_transform_wt_binary(global_roi):
             transforms.RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
         ]
     )
-
     return global_transform_wt_binary
 
 
@@ -40,6 +62,19 @@ def val_transform_wt_binary():
     )
 
     return val_transform_wt_binary
+
+
+def test_transform_wt_binary():
+    test_transform_wt_binary = transforms.Compose(
+        [
+            transforms.LoadImaged(keys=["image", "label"]),
+            transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+            transforms.Lambdad(keys="label", func=prepare_wt_mask),  # Prepare binary WT label
+            transforms.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+        ]
+    )
+
+    return test_transform_wt_binary
 
 
 def get_mc_transforms(local_roi):
@@ -76,7 +111,7 @@ def get_mc_val_transforms():
             transforms.LoadImaged(keys=["image", "label", "wt_mask"]),
             transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
             transforms.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
-            transforms.AddChanneld(keys="wt_mask"),  # Add WT mask as an additional input channel
+            transforms.AddChanneld(keys="wt_mask"),  
         ]
     )
     return val_transform

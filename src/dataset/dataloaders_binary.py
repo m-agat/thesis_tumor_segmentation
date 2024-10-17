@@ -34,7 +34,7 @@ def get_loader_wt_binary(batch_size, train_folder, val_folder, global_roi):
     # Load train and validation files
     train_files, val_files = read_data_from_folders_binary_wt(train_folder, val_folder)
 
-    # Binary WT transforms (no need for local/global at this stage)
+    # Binary WT transforms 
     global_transform_wt_binary = train_transform_wt_binary(global_roi=global_roi)
 
     val_transform_wt_bin = val_transform_wt_binary()
@@ -44,8 +44,8 @@ def get_loader_wt_binary(batch_size, train_folder, val_folder, global_roi):
     val_ds = data.Dataset(data=val_files, transform=val_transform_wt_bin)
 
     # Create data loaders
-    train_loader = data.DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = data.DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=8, pin_memory=True)
+    train_loader = data.DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=6, pin_memory=True)
+    val_loader = data.DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=6, pin_memory=True)
 
     return train_loader, val_loader
 
