@@ -1,4 +1,4 @@
-from azureml.core import Workspace, Experiment, ScriptRunConfig, Environment, Dataset, Datastore
+from azureml.core import Workspace, Experiment, ScriptRunConfig, Environment, Dataset
 from azureml.core.compute import ComputeTarget
 
 # Workspace from config.json file
@@ -22,7 +22,7 @@ data_reference = dataset.as_mount()
 # Configuring the script
 config = ScriptRunConfig(
     source_directory='/home/agata/Desktop/thesis_tumor_segmentation/src',
-    script='train/train_stage1.py',
+    script='train/train.py',
     arguments=['--data_path', data_reference],
     compute_target=compute_target,
     environment=env,

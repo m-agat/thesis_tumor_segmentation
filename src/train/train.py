@@ -1,36 +1,56 @@
+import sys
+sys.path.append('../')
+import os
 import torch
 import time
-import config
-import models.models as models 
-from losses import get_loss_function, dice_acc, post_softmax, post_pred
+import config.config as config
+import models.models as models
 from utils.utils import save_checkpoint, EarlyStopping
 from train_helpers import train_epoch, val_epoch
 import numpy as np
 from functools import partial
 from monai.inferers import sliding_window_inference
+from monai.metrics import DiceMetric
+from monai.utils.enums import MetricReduction
+from monai.losses import GeneralizedDiceLoss
+from monai.transforms import AsDiscrete, Activations
 
+# Initialize the model
 model = models.swinunetr_model
 filename = models.get_model_name(models.models_dict, model)
 
+# Loss and accuracy
+loss_func = GeneralizedDiceLoss(
+            include_background=True,
+            to_onehot_y=False,
+            sigmoid=True,
+            w_type="square"
+        )
+dice_acc = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True)
+
 # Optimizer and scheduler
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.config.max_epochs)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.max_epochs)
+
+post_activation = Activations(sigmoid=True)
+post_pred = AsDiscrete(argmax=False, threshold=0.5)
 
 # Inference function
 model_inferer = partial(
     sliding_window_inference,
-    roi_size=config.global_roi,
+    roi_size=config.roi,
     sw_batch_size=config.sw_batch_size,
     predictor=model,
     overlap=config.infer_overlap,
 )
 
+# Early stopping mechanism
 early_stopper = EarlyStopping(
-    patience=20, 
-    delta=0.001, 
-    verbose=True, 
-    save_checkpoint_fn=save_checkpoint,  
-    filename=filename
+    patience=20,
+    delta=0.001,
+    verbose=True,
+    save_checkpoint_fn=save_checkpoint,
+    filename=models.get_model_name(models.models_dict, model),
 )
 
 # Main trainer function
@@ -42,10 +62,11 @@ def trainer(
     loss_func,
     acc_func,
     scheduler,
-    model_inferer,
-    start_epoch,
-    post_softmax,
-    post_pred,
+    model_inferer=None,
+    start_epoch=0,
+    post_sigmoid=None,
+    post_pred=None,
+    early_stopper=None,
 ):
     val_acc_max = 0.0
     dices_tc = []
@@ -80,7 +101,7 @@ def trainer(
                 epoch=epoch,
                 acc_func=acc_func,
                 model_inferer=model_inferer,
-                post_softmax=post_softmax,
+                post_sigmoid=post_sigmoid,
                 post_pred=post_pred,
             )
             dice_tc = val_acc[0]
@@ -103,14 +124,6 @@ def trainer(
             dices_wt.append(dice_wt)
             dices_et.append(dice_et)
             dices_avg.append(val_avg_acc)
-
-            # Initialize early stopper
-            early_stopper(val_avg_acc, model, epoch, best_acc=val_acc_max)
-
-            if early_stopper.early_stop:
-                print(f"Early stopping triggered at epoch {epoch + 1}. Best accuracy: {val_acc_max}")
-                break  # Stop training
-
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
@@ -121,6 +134,14 @@ def trainer(
                     filename=filename
                 )
             scheduler.step()
+
+            # Check for early stopping
+            if early_stopper is not None:
+                early_stopper(val_avg_acc, model)
+                if early_stopper.early_stop:
+                    print("Early stopping triggered. Stopping training.")
+                    break
+                
     print("Training Finished !, Best Accuracy: ", val_acc_max)
     return (
         val_acc_max,
@@ -132,27 +153,19 @@ def trainer(
         trains_epoch,
     )
 
-# Start training
+# Start training 
 start_epoch = 0
 
-(
-    val_acc_max,
-    dices_tc,
-    dices_wt,
-    dices_et,
-    dices_avg,
-    loss_epochs,
-    trains_epoch,
-) = trainer(
+val_acc_max, dices_tc, dices_wt, dices_et, dices_avg, loss_epochs, trains_epoch = trainer(
     model=model,
     train_loader=config.train_loader,
     val_loader=config.val_loader,
     optimizer=optimizer,
-    loss_func=get_loss_function(True),
+    loss_func=loss_func,  
     acc_func=dice_acc,
     scheduler=scheduler,
     model_inferer=model_inferer,
     start_epoch=start_epoch,
-    post_softmax=post_softmax,
+    post_sigmoid=post_activation,
     post_pred=post_pred,
 )

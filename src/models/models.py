@@ -1,11 +1,10 @@
 from monai.networks.nets import SwinUNETR, SegResNet, VNet, AttentionUnet
 import config.config as config
 
-# Models for Stage 1 (Binary Segmentation: WT vs Background)
-swinunetr_model_stage1 = SwinUNETR(
-    img_size = config.global_roi,
+swinunetr_model = SwinUNETR(
+    img_size=config.roi,
     in_channels=4,
-    out_channels=2,  # Binary segmentation (WT vs Background)
+    out_channels=3,  
     feature_size=48,
     drop_rate=0.1,
     attn_drop_rate=0.1,
@@ -13,83 +12,37 @@ swinunetr_model_stage1 = SwinUNETR(
     use_checkpoint=True,
 ).to(config.device)
 
-segresnet_model_stage1 = SegResNet(
+segresnet_model = SegResNet(
     blocks_down=[1, 2, 2, 4],
     blocks_up=[1, 1, 1],
     init_filters=16,
     in_channels=4,
-    out_channels=2,  # Binary segmentation
+    out_channels=3,  
     dropout_prob=0.2,
 ).to(config.device)
 
-attunet_model_stage1 = AttentionUnet(
+attunet_model = AttentionUnet(
     spatial_dims=3,
     in_channels=4,
-    out_channels=2,  # Binary segmentation
+    out_channels=3,  
     channels=(16, 32, 64, 128, 256),
     strides=(2, 2, 2, 2),
     dropout=0.1
 ).to(config.device)
 
-vnet_model_stage1 = VNet(
+vnet_model = VNet(
     spatial_dims=3,
     in_channels=4,
-    out_channels=2,  # Binary segmentation
+    out_channels=3,  
     act=("elu", {"inplace": True}),
 ).to(config.device)
 
 
-# Models for Stage 2 (Multi-class Segmentation: WT, TC, ET, Background)
-swinunetr_model_stage2 = SwinUNETR(
-    img_size=config.global_roi,
-    in_channels=4,
-    out_channels=4,  # Multi-class segmentation (WT, TC, ET, Background)
-    feature_size=48,
-    drop_rate=0.1,
-    attn_drop_rate=0.1,
-    dropout_path_rate=0.1,
-    use_checkpoint=True,
-).to(config.device)
-
-segresnet_model_stage2 = SegResNet(
-    blocks_down=[1, 2, 2, 4],
-    blocks_up=[1, 1, 1],
-    init_filters=16,
-    in_channels=4,
-    out_channels=4,  # Multi-class segmentation
-    dropout_prob=0.2,
-).to(config.device)
-
-attunet_model_stage2 = AttentionUnet(
-    spatial_dims=3,
-    in_channels=4,
-    out_channels=4,  # Multi-class segmentation
-    channels=(16, 32, 64, 128, 256),
-    strides=(2, 2, 2, 2),
-    dropout=0.1
-).to(config.device)
-
-vnet_model_stage2 = VNet(
-    spatial_dims=3,
-    in_channels=4,
-    out_channels=4,  # Multi-class segmentation
-    act=("elu", {"inplace": True}),
-).to(config.device)
-
-
-# Store models in dictionaries for easier access
-models_stage1 = {
-    "swinunetr_stage1.pt": swinunetr_model_stage1,
-    "segresnet_stage1.pt": segresnet_model_stage1,
-    "attunet_stage1.pt": attunet_model_stage1,
-    "vnet_stage1.pt": vnet_model_stage1,
-}
-
-models_stage2 = {
-    "swinunetr_stage2.pt": swinunetr_model_stage2,
-    "segresnet_stage2.pt": segresnet_model_stage2,
-    "attunet_stage2.pt": attunet_model_stage2,
-    "vnet_stage2.pt": vnet_model_stage2,
+models_dict = {
+    "swinunetr_model.pt": swinunetr_model,
+    "segresnet_model.pt": segresnet_model,
+    "attunet_model.pt": attunet_model,
+    "vnet_model.pt": vnet_model,
 }
 
 # Function to retrieve model name

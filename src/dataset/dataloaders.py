@@ -1,9 +1,8 @@
 import os
 from monai import data
-from transforms import get_mc_transforms, get_mc_val_transforms, get_test_transforms
-import torch 
+from dataset.transforms import get_train_transforms, get_val_transforms, get_test_transforms
 
-def read_data_from_folders(train_folder, val_folder, basedir):
+def read_data_from_folders(train_folder, val_folder):
     """
     Read training and validation data from specific folders.
     """
@@ -23,22 +22,22 @@ def read_data_from_folders(train_folder, val_folder, basedir):
         return files
 
     # Load train and validation files
-    train_files = load_cases_from_folder(os.path.join(basedir, train_folder))
-    val_files = load_cases_from_folder(os.path.join(basedir, val_folder))
+    train_files = load_cases_from_folder(train_folder)
+    val_files = load_cases_from_folder(val_folder)
     
     return train_files, val_files
 
 
-def get_loader_multi_class(batch_size, data_dir, train_folder, val_folder, local_roi):
+def get_loaders(batch_size, train_folder, val_folder, roi):
     """
     Create data loaders for the second stage, focusing on multi-class segmentation.
     """
     # Load train and validation files
-    train_files, val_files = read_data_from_folders(train_folder, val_folder, data_dir)
+    train_files, val_files = read_data_from_folders(train_folder, val_folder)
 
     # Get the global and local transforms for multi-class segmentation
-    train_transform = get_mc_transforms(local_roi)
-    val_transform = get_mc_val_transforms()
+    train_transform = get_train_transforms(roi)
+    val_transform = get_val_transforms()
 
     # Create datasets with global and local patches
     mc_train_ds = data.Dataset(data=train_files, transform=train_transform)
@@ -49,6 +48,7 @@ def get_loader_multi_class(batch_size, data_dir, train_folder, val_folder, local
     val_loader = data.DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=8, pin_memory=True)
 
     return local_train_loader, val_loader
+
 
 
 def load_test_data(test_folder, data_dir, batch_size=1):

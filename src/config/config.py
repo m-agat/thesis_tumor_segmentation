@@ -1,7 +1,7 @@
 import sys
 sys.path.append('../')
 import os
-import dataset.dataloaders_binary as dataloaders_binary
+import dataset.dataloaders as dataloaders
 import torch 
 from torch.utils.data import Subset
 import random 
@@ -41,28 +41,12 @@ torch.cuda.empty_cache()
 print(f"Using {device}")
 
 # Global configuration parameters 
-global_roi = (128, 128, 128)
-local_roi = (64, 64, 64)
-batch_size = 4
+roi = (96, 96, 96)
+batch_size = 1
 sw_batch_size = 2
 infer_overlap = 0.5
-max_epochs = 2
+max_epochs = 1 
 val_every = 10
 
 # Data loaders for binary segmentation
-train_loader, val_loader = dataloaders_binary.get_loader_wt_binary(batch_size, train_folder, val_folder, global_roi)
-
-# Creating subset of data for testing purposes
-subset_size = 10
-
-# Create random indices for the subset
-train_indices = random.sample(range(len(train_loader.dataset)), subset_size)
-val_indices = random.sample(range(len(val_loader.dataset)), subset_size)
-
-# Create subset data loaders
-train_subset = Subset(train_loader.dataset, train_indices)
-val_subset = Subset(val_loader.dataset, val_indices)
-
-# New data loaders with the smaller subsets
-train_loader_subset = torch.utils.data.DataLoader(train_subset, batch_size=batch_size, shuffle=True)
-val_loader_subset = torch.utils.data.DataLoader(val_subset, batch_size=batch_size, shuffle=False)
+train_loader, val_loader = dataloaders.get_loaders(batch_size, train_folder, val_folder, roi)

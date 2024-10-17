@@ -41,3 +41,9 @@ I tried to run predictions using an nnUNet on the new data, but some patients ha
 
 Show the nnUNet result on patient ARE
 
+
+
+- !!! uncertainties on the voxel level
+- generate images of one slice for all patients
+- retrain the models on more epochs
+- combine the models (with uncertainties and without): compare the two approaches 
