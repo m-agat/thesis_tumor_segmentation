@@ -32,6 +32,10 @@ print(f"Train folder: {train_folder}")
 print(f"Val folder: {val_folder}")
 
 # GPU config
+print(torch.cuda.is_available())
+print(torch.cuda.device_count())
+print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.cuda.empty_cache()
 print(f"Using {device}")
@@ -39,10 +43,10 @@ print(f"Using {device}")
 # Global configuration parameters 
 global_roi = (128, 128, 128)
 local_roi = (64, 64, 64)
-batch_size = 1
+batch_size = 4
 sw_batch_size = 2
 infer_overlap = 0.5
-max_epochs = 300
+max_epochs = 2
 val_every = 10
 
 # Data loaders for binary segmentation

@@ -1,5 +1,6 @@
 import sys
 sys.path.append('../')
+import os
 import torch
 import time
 import config.config as config
@@ -28,7 +29,7 @@ dice_acc = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BA
 # Inference function
 model_inferer = partial(
     sliding_window_inference,
-    roi_size=config.global_roi,
+    roi_size= [config.global_roi[0], config.global_roi[1], config.global_roi[2]],
     sw_batch_size=config.sw_batch_size,
     predictor=model,
     overlap=config.infer_overlap,
@@ -120,8 +121,8 @@ start_epoch = 0
 
 val_acc_max, dices_wt, loss_epochs, trains_epoch = trainer(
     model=model,
-    train_loader=config.train_loader_subset,
-    val_loader=config.val_loader_subset,
+    train_loader=config.train_loader,
+    val_loader=config.val_loader,
     optimizer=optimizer,
     loss_func=get_loss_function(binary_segmentation=True),  # Binary loss for WT vs Background
     acc_func=dice_acc,
@@ -133,6 +134,10 @@ val_acc_max, dices_wt, loss_epochs, trains_epoch = trainer(
 )
 
 # Save WT predictions for fine-tuning in Stage 2
-stage1_wt_predictions = get_wt_predictions(model, config.train_loader_subset, model_inferer)  # Implement this function
+stage1_wt_predictions = get_wt_predictions(model, config.train_loader_subset, model_inferer) 
 
-torch.save(stage1_wt_predictions, "stage1_wt_predictions.pth")  # Save the WT predictions for Stage 2
+output_dir = "./outputs"
+os.makedirs(output_dir, exist_ok=True)  
+checkpoint_path = os.path.join(output_dir, "swinunetr_stage1.pt")
+
+torch.save(stage1_wt_predictions, checkpoint_path)
