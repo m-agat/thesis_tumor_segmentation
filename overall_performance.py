@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import pandas as pd
 import nibabel as nib
-from dataset.dataloaders import load_test_data
+from dataset.dataloaders_binary import load_test_data
 from src.model_inference import load_models, get_segmentation
 from src.metrics import compute_dice_score
 

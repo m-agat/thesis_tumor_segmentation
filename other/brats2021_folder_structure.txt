@@ -1,0 +1,132 @@
+> brats2021_challenge
+	> PreprocessedData
+	> TrainingData
+	│   > BraTS2021_00000
+	│   │   > BraTS2021_00000_flair.nii.gz
+	│   │   > BraTS2021_00000_seg.nii.gz
+	│   │   > BraTS2021_00000_t1.nii.gz
+	│   │   > BraTS2021_00000_t1ce.nii.gz
+	│   │   └── BraTS2021_00000_t2.nii.gz
+	│   > BraTS2021_00002
+	│   │   > BraTS2021_00002_flair.nii.gz
+	│   │   > BraTS2021_00002_seg.nii.gz
+	│   │   > BraTS2021_00002_t1.nii.gz
+	│   │   > BraTS2021_00002_t1ce.nii.gz
+	│   │   └── BraTS2021_00002_t2.nii.gz
+	│   > BraTS2021_00003
+	│   │   > BraTS2021_00003_flair.nii.gz
+	│   │   > BraTS2021_00003_seg.nii.gz
+	│   │   > BraTS2021_00003_t1.nii.gz
+	│   │   > BraTS2021_00003_t1ce.nii.gz
+	│   │   └── BraTS2021_00003_t2.nii.gz
+	│   > BraTS2021_00005
+	│   │   > BraTS2021_00005_flair.nii.gz
+	│   │   > BraTS2021_00005_seg.nii.gz
+	│   │   > BraTS2021_00005_t1.nii.gz
+	│   │   > BraTS2021_00005_t1ce.nii.gz
+	│   │   └── BraTS2021_00005_t2.nii.gz
+	│   └── BraTS2021_00006
+	│       > BraTS2021_00006_flair.nii.gz
+	│       > BraTS2021_00006_seg.nii.gz
+	│       > BraTS2021_00006_t1.nii.gz
+	│       > BraTS2021_00006_t1ce.nii.gz
+	│       └── BraTS2021_00006_t2.nii.gz
+	│   └── ...
+	> split
+	    > test
+	    │   > BraTS2021_00002
+	    │   │   > BraTS2021_00002_flair.nii.gz
+	    │   │   > BraTS2021_00002_seg.nii.gz
+	    │   │   > BraTS2021_00002_t1.nii.gz
+	    │   │   > BraTS2021_00002_t1ce.nii.gz
+	    │   │   └── BraTS2021_00002_t2.nii.gz
+	    │   > BraTS2021_00005
+	    │   │   > BraTS2021_00005_flair.nii.gz
+	    │   │   > BraTS2021_00005_seg.nii.gz
+	    │   │   > BraTS2021_00005_t1.nii.gz
+	    │   │   > BraTS2021_00005_t1ce.nii.gz
+	    │   │   └── BraTS2021_00005_t2.nii.gz
+	    │   > BraTS2021_00011
+	    │   │   > BraTS2021_00011_flair.nii.gz
+	    │   │   > BraTS2021_00011_seg.nii.gz
+	    │   │   > BraTS2021_00011_t1.nii.gz
+	    │   │   > BraTS2021_00011_t1ce.nii.gz
+	    │   │   └── BraTS2021_00011_t2.nii.gz
+	    │   > BraTS2021_00016
+	    │   │   > BraTS2021_00016_flair.nii.gz
+	    │   │   > BraTS2021_00016_seg.nii.gz
+	    │   │   > BraTS2021_00016_t1.nii.gz
+	    │   │   > BraTS2021_00016_t1ce.nii.gz
+	    │   │   └── BraTS2021_00016_t2.nii.gz
+	    │   └── BraTS2021_00036
+	    │       > BraTS2021_00036_flair.nii.gz
+	    │       > BraTS2021_00036_seg.nii.gz
+	    │       > BraTS2021_00036_t1.nii.gz
+	    │       > BraTS2021_00036_t1ce.nii.gz
+	    │       └── BraTS2021_00036_t2.nii.gz
+	    │   └── ...
+	    > train
+	    │   > BraTS2021_00000
+	    │   │   > BraTS2021_00000_flair.nii.gz
+	    │   │   > BraTS2021_00000_seg.nii.gz
+	    │   │   > BraTS2021_00000_t1.nii.gz
+	    │   │   > BraTS2021_00000_t1ce.nii.gz
+	    │   │   └── BraTS2021_00000_t2.nii.gz
+	    │   > BraTS2021_00003
+	    │   │   > BraTS2021_00003_flair.nii.gz
+	    │   │   > BraTS2021_00003_seg.nii.gz
+	    │   │   > BraTS2021_00003_t1.nii.gz
+	    │   │   > BraTS2021_00003_t1ce.nii.gz
+	    │   │   └── BraTS2021_00003_t2.nii.gz
+	    │   > BraTS2021_00006
+	    │   │   > BraTS2021_00006_flair.nii.gz
+	    │   │   > BraTS2021_00006_seg.nii.gz
+	    │   │   > BraTS2021_00006_t1.nii.gz
+	    │   │   > BraTS2021_00006_t1ce.nii.gz
+	    │   │   └── BraTS2021_00006_t2.nii.gz
+	    │   > BraTS2021_00008
+	    │   │   > BraTS2021_00008_flair.nii.gz
+	    │   │   > BraTS2021_00008_seg.nii.gz
+	    │   │   > BraTS2021_00008_t1.nii.gz
+	    │   │   > BraTS2021_00008_t1ce.nii.gz
+	    │   │   └── BraTS2021_00008_t2.nii.gz
+	    │   └── BraTS2021_00009
+	    │       > BraTS2021_00009_flair.nii.gz
+	    │       > BraTS2021_00009_seg.nii.gz
+	    │       > BraTS2021_00009_t1.nii.gz
+	    │       > BraTS2021_00009_t1ce.nii.gz
+	    │       └── BraTS2021_00009_t2.nii.gz
+	    │   └── ...
+	    └── val
+		> BraTS2021_00012
+		│   > BraTS2021_00012_flair.nii.gz
+		│   > BraTS2021_00012_seg.nii.gz
+		│   > BraTS2021_00012_t1.nii.gz
+		│   > BraTS2021_00012_t1ce.nii.gz
+		│   └── BraTS2021_00012_t2.nii.gz
+		> BraTS2021_00022
+		│   > BraTS2021_00022_flair.nii.gz
+		│   > BraTS2021_00022_seg.nii.gz
+		│   > BraTS2021_00022_t1.nii.gz
+		│   > BraTS2021_00022_t1ce.nii.gz
+		│   └── BraTS2021_00022_t2.nii.gz
+		> BraTS2021_00028
+		│   > BraTS2021_00028_flair.nii.gz
+		│   > BraTS2021_00028_seg.nii.gz
+		│   > BraTS2021_00028_t1.nii.gz
+		│   > BraTS2021_00028_t1ce.nii.gz
+		│   └── BraTS2021_00028_t2.nii.gz
+		> BraTS2021_00030
+		│   > BraTS2021_00030_flair.nii.gz
+		│   > BraTS2021_00030_seg.nii.gz
+		│   > BraTS2021_00030_t1.nii.gz
+		│   > BraTS2021_00030_t1ce.nii.gz
+		│   └── BraTS2021_00030_t2.nii.gz
+		└── BraTS2021_00043
+		    > BraTS2021_00043_flair.nii.gz
+		    > BraTS2021_00043_seg.nii.gz
+		    > BraTS2021_00043_t1.nii.gz
+		    > BraTS2021_00043_t1ce.nii.gz
+		    └── BraTS2021_00043_t2.nii.gz
+		└── ...
+	└── brats21_folds.json
