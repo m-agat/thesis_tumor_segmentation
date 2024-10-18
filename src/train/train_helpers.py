@@ -7,13 +7,16 @@ from torch.cuda.amp import autocast, GradScaler
 
 scaler = GradScaler()
 
+
 def train_epoch(model, loader, optimizer, epoch, loss_func):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
-    
+
     for idx, batch_data in enumerate(loader):
-        data, target = batch_data["image"].to(config.device), batch_data["label"].to(config.device)
+        data, target = batch_data["image"].to(config.device), batch_data["label"].to(
+            config.device
+        )
 
         # Zero the gradients before the forward pass
         optimizer.zero_grad()
@@ -34,7 +37,7 @@ def train_epoch(model, loader, optimizer, epoch, loss_func):
             f"loss: {run_loss.avg:.4f}",
             f"time {time.time() - start_time:.2f}s",
         )
-        
+
         start_time = time.time()
 
     torch.cuda.empty_cache()
@@ -57,11 +60,16 @@ def val_epoch(
 
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
-            data, target = batch_data["image"].to(config.device), batch_data["label"].to(config.device)
+            data, target = batch_data["image"].to(config.device), batch_data[
+                "label"
+            ].to(config.device)
             logits = model_inferer(data)
             val_labels_list = decollate_batch(target)
             val_outputs_list = decollate_batch(logits)
-            val_output_convert = [post_pred(post_sigmoid(val_pred_tensor)) for val_pred_tensor in val_outputs_list]
+            val_output_convert = [
+                post_pred(post_sigmoid(val_pred_tensor))
+                for val_pred_tensor in val_outputs_list
+            ]
             acc_func.reset()
             acc_func(y_pred=val_output_convert, y=val_labels_list)
             acc, not_nans = acc_func.aggregate()

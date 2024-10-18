@@ -1,5 +1,6 @@
 import sys
-sys.path.append('../')
+
+sys.path.append("../")
 import os
 import torch
 import time
@@ -21,16 +22,17 @@ filename = models.get_model_name(models.models_dict, model)
 
 # Loss and accuracy
 loss_func = GeneralizedDiceLoss(
-            include_background=True,
-            to_onehot_y=False,
-            sigmoid=True,
-            w_type="square"
-        )
-dice_acc = DiceMetric(include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True)
+    include_background=True, to_onehot_y=False, sigmoid=True, w_type="square"
+)
+dice_acc = DiceMetric(
+    include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True
+)
 
 # Optimizer and scheduler
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.max_epochs)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=config.max_epochs
+)
 
 post_activation = Activations(sigmoid=True)
 post_pred = AsDiscrete(argmax=False, threshold=0.5)
@@ -52,6 +54,7 @@ early_stopper = EarlyStopping(
     save_checkpoint_fn=save_checkpoint,
     filename=models.get_model_name(models.models_dict, model),
 )
+
 
 # Main trainer function
 def trainer(
@@ -127,12 +130,7 @@ def trainer(
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
-                save_checkpoint(
-                    model,
-                    epoch,
-                    best_acc=val_acc_max,
-                    filename=filename
-                )
+                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=filename)
             scheduler.step()
 
             # Check for early stopping
@@ -141,7 +139,7 @@ def trainer(
                 if early_stopper.early_stop:
                     print("Early stopping triggered. Stopping training.")
                     break
-                
+
     print("Training Finished !, Best Accuracy: ", val_acc_max)
     return (
         val_acc_max,
@@ -153,19 +151,22 @@ def trainer(
         trains_epoch,
     )
 
-# Start training 
+
+# Start training
 start_epoch = 0
 
-val_acc_max, dices_tc, dices_wt, dices_et, dices_avg, loss_epochs, trains_epoch = trainer(
-    model=model,
-    train_loader=config.train_loader,
-    val_loader=config.val_loader,
-    optimizer=optimizer,
-    loss_func=loss_func,  
-    acc_func=dice_acc,
-    scheduler=scheduler,
-    model_inferer=model_inferer,
-    start_epoch=start_epoch,
-    post_sigmoid=post_activation,
-    post_pred=post_pred,
+val_acc_max, dices_tc, dices_wt, dices_et, dices_avg, loss_epochs, trains_epoch = (
+    trainer(
+        model=model,
+        train_loader=config.train_loader,
+        val_loader=config.val_loader,
+        optimizer=optimizer,
+        loss_func=loss_func,
+        acc_func=dice_acc,
+        scheduler=scheduler,
+        model_inferer=model_inferer,
+        start_epoch=start_epoch,
+        post_sigmoid=post_activation,
+        post_pred=post_pred,
+    )
 )

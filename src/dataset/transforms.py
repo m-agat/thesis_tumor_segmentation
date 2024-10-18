@@ -1,5 +1,6 @@
 from monai import transforms
 
+
 def get_train_transforms(roi):
     """
     Returns the transformations for global patches (larger patches).
@@ -8,7 +9,9 @@ def get_train_transforms(roi):
         [
             transforms.LoadImaged(keys=["image", "label"]),
             transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
-            transforms.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+            transforms.NormalizeIntensityd(
+                keys="image", nonzero=True, channel_wise=True
+            ),
             transforms.RandSpatialCropd(
                 keys=["image", "label"],
                 roi_size=[roi[0], roi[1], roi[2]],
@@ -32,7 +35,9 @@ def get_val_transforms():
         [
             transforms.LoadImaged(keys=["image", "label"]),
             transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
-            transforms.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+            transforms.NormalizeIntensityd(
+                keys="image", nonzero=True, channel_wise=True
+            ),
         ]
     )
     return val_transform
@@ -46,7 +51,9 @@ def get_test_transforms():
         [
             transforms.LoadImaged(keys=["image", "label"]),
             transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
-            transforms.NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+            transforms.NormalizeIntensityd(
+                keys="image", nonzero=True, channel_wise=True
+            ),
         ]
     )
     return test_transform
