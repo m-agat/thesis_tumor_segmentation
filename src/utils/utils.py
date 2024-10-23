@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import os
 import config.config as config
-
+import nibabel as nib
 
 def save_checkpoint(model, epoch, filename="model.pt", best_acc=0, dir_add=None):
     state_dict = model.state_dict()
@@ -110,3 +110,16 @@ def calculate_specificity(pred, true):
     false_positives = (pred * (1 - true)).sum(dim=(2, 3, 4))
     specificity = true_negatives / (true_negatives + false_positives + 1e-7)
     return specificity.mean().item()
+
+def save_nifti(data, affine, filename):
+    """
+    Save the given data as a NIfTI file.
+    
+    Args:
+        data (np.ndarray): 3D or 4D array to be saved as NIfTI.
+        affine (np.ndarray): Affine matrix for spatial orientation.
+        filename (str): Path where to save the NIfTI file.
+    """
+    nifti_img = nib.Nifti1Image(data, affine)
+    nib.save(nifti_img, filename)
+    print(f"Saved segmentation to {filename}")

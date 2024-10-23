@@ -1,5 +1,4 @@
 import sys
-
 sys.path.append("../")
 import os
 import torch
@@ -13,17 +12,20 @@ from functools import partial
 from monai.inferers import sliding_window_inference
 from monai.metrics import DiceMetric
 from monai.utils.enums import MetricReduction
-from monai.losses import GeneralizedDiceLoss
+from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
 
 # Initialize the model
-model = models.swinunetr_model
+model = models.vnet_model
 filename = models.get_model_name(models.models_dict, model)
 
+print("Training, ", filename)
+
 # Loss and accuracy
-loss_func = GeneralizedDiceLoss(
+loss_func = GeneralizedDiceFocalLoss(
     include_background=True, to_onehot_y=False, sigmoid=True, w_type="square"
 )
+
 dice_acc = DiceMetric(
     include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True
 )
@@ -55,7 +57,6 @@ early_stopper = EarlyStopping(
     filename=models.get_model_name(models.models_dict, model),
 )
 
-
 # Main trainer function
 def trainer(
     model,
@@ -72,6 +73,7 @@ def trainer(
     early_stopper=None,
 ):
     val_acc_max = 0.0
+    val_loss_min = float("inf")
     dices_tc = []
     dices_wt = []
     dices_et = []
@@ -98,11 +100,12 @@ def trainer(
             loss_epochs.append(train_loss)
             trains_epoch.append(int(epoch))
             epoch_time = time.time()
-            val_acc = val_epoch(
+            val_acc, val_loss = val_epoch(
                 model,
                 val_loader,
                 epoch=epoch,
                 acc_func=acc_func,
+                loss_func=loss_func,
                 model_inferer=model_inferer,
                 post_sigmoid=post_sigmoid,
                 post_pred=post_pred,
@@ -127,10 +130,17 @@ def trainer(
             dices_wt.append(dice_wt)
             dices_et.append(dice_et)
             dices_avg.append(val_avg_acc)
+
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
                 save_checkpoint(model, epoch, best_acc=val_acc_max, filename=filename)
+
+            if val_loss < val_loss_min:
+                print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
+                val_loss_min = val_loss
+                save_checkpoint(model, epoch, best_acc=val_loss_min, filename="vnet_model_bestloss.pt")
+
             scheduler.step()
 
             # Check for early stopping

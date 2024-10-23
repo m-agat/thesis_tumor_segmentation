@@ -1,11 +1,8 @@
 import sys
-
 sys.path.append("../")
 import os
 import dataset.dataloaders as dataloaders
 import torch
-from torch.utils.data import Subset
-import random
 import argparse
 
 
@@ -51,8 +48,8 @@ roi = (96, 96, 96)
 batch_size = 1
 sw_batch_size = 2
 infer_overlap = 0.5
-max_epochs = 1
-val_every = 10
+max_epochs = 300
+val_every = 5
 
 # Data loaders for binary segmentation
 train_loader, val_loader = dataloaders.get_loaders(
