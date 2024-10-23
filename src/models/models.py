@@ -25,8 +25,8 @@ attunet_model = AttentionUnet(
     spatial_dims=3,
     in_channels=4,
     out_channels=3,  
-    channels=(16, 32, 64, 128, 256),
-    strides=(2, 2, 2, 2),
+    channels=(32, 64, 128, 256, 512),
+    strides=(2, 2, 2, 1),
     dropout=0.1
 ).to(config.device)
 
@@ -34,6 +34,9 @@ vnet_model = VNet(
     spatial_dims=3,
     in_channels=4,
     out_channels=3,  
+    dropout_prob_down=0.3,
+    dropout_prob_up=(0.3, 0.2),
+    dropout_dim=3,
     act=("elu", {"inplace": True}),
 ).to(config.device)
 

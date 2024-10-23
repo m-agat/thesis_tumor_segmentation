@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import os
 import config.config as config
+import nibabel as nib
 
 def save_checkpoint(model, epoch, filename="model.pt", best_acc=0, dir_add=None):
     state_dict = model.state_dict()
@@ -16,10 +17,11 @@ def save_checkpoint(model, epoch, filename="model.pt", best_acc=0, dir_add=None)
 
     # Construct the full file path
     filename = os.path.join(dir_add, filename)
-    
+
     # Save the checkpoint
     torch.save(save_dict, filename)
     print("Saving checkpoint:", filename)
+
 
 class AverageMeter(object):
     def __init__(self):
@@ -40,7 +42,15 @@ class AverageMeter(object):
 
 class EarlyStopping:
     """Early stops the training if validation loss/accuracy doesn't improve after a given patience."""
-    def __init__(self, patience=10, delta=0.001, verbose=True, save_checkpoint_fn=save_checkpoint, filename="model.pt"):
+
+    def __init__(
+        self,
+        patience=10,
+        delta=0.001,
+        verbose=True,
+        save_checkpoint_fn=save_checkpoint,
+        filename="model.pt",
+    ):
         """
         Args:
             patience (int): How long to wait after last time validation score improved.
@@ -64,11 +74,15 @@ class EarlyStopping:
         self.filename = filename
 
     def __call__(self, val_score, model, epoch, best_acc):
-        score = -val_score  # Assume higher is better, change to loss if you are tracking loss
+        score = (
+            -val_score
+        )  # Assume higher is better, change to loss if you are tracking loss
 
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint_fn(model, epoch, filename=self.filename, best_acc=best_acc)
+            self.save_checkpoint_fn(
+                model, epoch, filename=self.filename, best_acc=best_acc
+            )
         elif score < self.best_score + self.delta:
             self.counter += 1
             print(f"EarlyStopping counter: {self.counter} out of {self.patience}")
@@ -76,6 +90,36 @@ class EarlyStopping:
                 self.early_stop = True
         else:
             self.best_score = score
-            self.save_checkpoint_fn(model, epoch, filename=self.filename, best_acc=best_acc)
+            self.save_checkpoint_fn(
+                model, epoch, filename=self.filename, best_acc=best_acc
+            )
             self.counter = 0
 
+
+def calculate_sensitivity(pred, true):
+    true_positives = (pred * true).sum(dim=(2, 3, 4))
+    false_negatives = ((1 - pred) * true).sum(dim=(2, 3, 4))
+    sensitivity = true_positives / (
+        true_positives + false_negatives + 1e-7
+    )  # Avoid division by zero
+    return sensitivity.mean().item()
+
+
+def calculate_specificity(pred, true):
+    true_negatives = ((1 - pred) * (1 - true)).sum(dim=(2, 3, 4))
+    false_positives = (pred * (1 - true)).sum(dim=(2, 3, 4))
+    specificity = true_negatives / (true_negatives + false_positives + 1e-7)
+    return specificity.mean().item()
+
+def save_nifti(data, affine, filename):
+    """
+    Save the given data as a NIfTI file.
+    
+    Args:
+        data (np.ndarray): 3D or 4D array to be saved as NIfTI.
+        affine (np.ndarray): Affine matrix for spatial orientation.
+        filename (str): Path where to save the NIfTI file.
+    """
+    nifti_img = nib.Nifti1Image(data, affine)
+    nib.save(nifti_img, filename)
+    print(f"Saved segmentation to {filename}")

@@ -1,22 +1,30 @@
 import os
 import shutil
-import random 
+import random
 
-'''
+"""
 Split the BraTS2021 dataset into train-val-test 
 
 - training cases = 875 (70%)
 - validation cases = 188 (15%)
 - test cases = 188 (15%)
 
-'''
+"""
 
 random.seed(42)
 
-data_dir = "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/TrainingData"
-train_dir = "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/train"
-val_dir = "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/val"
-test_dir = "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/test"
+data_dir = (
+    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/TrainingData"
+)
+train_dir = (
+    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/train"
+)
+val_dir = (
+    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/val"
+)
+test_dir = (
+    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/test"
+)
 
 os.makedirs(train_dir, exist_ok=True)
 os.makedirs(val_dir, exist_ok=True)
@@ -35,11 +43,13 @@ train_cases = cases[:train_split]
 val_cases = cases[train_split:val_split]
 test_cases = cases[val_split:]
 
+
 def copy_cases(cases, dest_dir):
     for case in cases:
         case_path = os.path.join(data_dir, case)
         dest_case_path = os.path.join(dest_dir, case)
         shutil.copytree(case_path, dest_case_path)
+
 
 copy_cases(train_cases, train_dir)
 copy_cases(val_cases, val_dir)

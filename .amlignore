@@ -1,0 +1,15 @@
+.ipynb_checkpoints
+.azureml
+.git
+.thesis_env
+/data
+/experiments
+/figures
+/results
+/other
+/nnUNet
+logs
+azureml-setup
+docs
+__pycache__
+/outputs
