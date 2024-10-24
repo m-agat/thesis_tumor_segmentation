@@ -96,7 +96,7 @@ def load_test_data(test_folder, batch_size=1):
         test_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=8,
+        num_workers=6,
         pin_memory=True,
     )
 
