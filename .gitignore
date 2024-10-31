@@ -20,7 +20,7 @@ figures/
 *.pt
 *.yml
 *.json
-.csv
+*.csv
 
 
 # C extensions
