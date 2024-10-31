@@ -1,3 +1,4 @@
+import os
 import sys
 sys.path.append("../")
 import models.models as models
@@ -8,12 +9,24 @@ from functools import partial
 import numpy as np
 from utils.utils import visualize_slices
 import nibabel as nib
-import pandas as pd 
-
-model = models.attunet_model
-checkpoint = torch.load(
-    "/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet/attunet_model.pt"
+import pandas as pd
+from uncertainty.test_time_dropout import (
+    test_time_dropout_inference,
+    scale_to_range_0_100,
 )
+from uncertainty.test_time_augmentation import test_time_augmentation_inference
+from utils.metrics import (
+    compute_dice_score_per_tissue,
+    compute_hd95,
+    compute_sensitivity,
+    calculate_composite_score,
+)
+
+base_path = "./outputs"
+os.makedirs(base_path, exist_ok=True)
+print(f"Output directory created: {base_path}")
+model = models.swinunetr_model
+checkpoint = torch.load(config.model_file_path)
 model.load_state_dict(checkpoint["state_dict"])
 model.to(config.device)
 model.eval()
@@ -25,42 +38,34 @@ model_inferer_test = partial(
     overlap=0.6,
 )
 
-def compute_dice_score_per_tissue(prediction, ground_truth, tissue_type):
-    """
-    Compute the Dice score for a specific tissue type.
-    Args:
-        prediction (numpy.ndarray): The predicted segmentation.
-        ground_truth (numpy.ndarray): The ground truth segmentation.
-        tissue_type (int): The label of the tissue type to evaluate (e.g., 1 for NCR, 2 for ED, 4 for ET).
-    
-    Returns:
-        float: Dice score for the specified tissue type.
-    """
-    pred_tissue = (prediction == tissue_type).astype(np.float32)
-    gt_tissue = (ground_truth == tissue_type).astype(np.float32)
-    
-    intersection = np.sum(pred_tissue * gt_tissue)
-    union = np.sum(pred_tissue) + np.sum(gt_tissue)
-    
-    if union == 0:
-        return 1.0  # If both prediction and ground truth have no pixels for this class, Dice is perfect.
-    
-    return (2.0 * intersection) / union
-
 patient_scores = []
-tissue_averages = {1: [], 2: [], 4: []}
+tissue_averages = {
+    1: {"Dice": [], "HD95": [], "Sensitivity": [], "Composite_Score": []},
+    2: {"Dice": [], "HD95": [], "Sensitivity": [], "Composite_Score": []},
+    4: {"Dice": [], "HD95": [], "Sensitivity": [], "Composite_Score": []},
+}
+weights = {"Dice": 0.4, "HD95": 0.3, "Sensitivity": 0.3}
+total_patients = len(config.test_loader)
 with torch.no_grad():
-    for batch_data in config.test_loader:
+    for idx, batch_data in enumerate(config.test_loader):
         image = batch_data["image"].cuda()
         patient_path = batch_data["path"]
 
+        print(f"Processing patient {idx}/{total_patients}: {patient_path[0]}")
+
         # Extract the affine matrix from the original image
-        original_image_path = f"/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/test/{patient_path[0]}/{patient_path[0]}_flair.nii.gz"
+        original_image_path = os.path.join(
+            config.test_folder, patient_path[0], f"{patient_path[0]}_flair.nii.gz"
+        )
         original_nifti = nib.load(original_image_path)
         affine = original_nifti.affine
+        header = original_nifti.header
 
         # Perform inference
-        prob = torch.sigmoid(model_inferer_test(image))
+        from torch.cuda.amp import autocast
+
+        with autocast():
+            prob = torch.sigmoid(model_inferer_test(image))
         seg = prob[0].detach().cpu().numpy()
         seg = (seg > 0.5).astype(np.int8)
         seg_out = np.zeros((seg.shape[1], seg.shape[2], seg.shape[3]))
@@ -69,49 +74,85 @@ with torch.no_grad():
         seg_out[seg[2] == 1] = 4
 
         # Save the segmentation output as a NIfTI file using the extracted affine
-        nifti_img = nib.Nifti1Image(seg_out, affine)
-        nib.save(nifti_img, f"/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet/AttentionUNet_Results_Test_Set/{patient_path[0]}_segmentation.nii.gz")
+        # nifti_img = nib.Nifti1Image(seg_out, affine)
+        # nib.save(nifti_img, f"/home/agata/Desktop/thesis_tumor_segmentation/results/VNet/VNet_Results_Test_Set/{patient_path[0]}_segmentation.nii.gz")
 
-        ground_truth = batch_data["label"].cpu().numpy()  
+        ground_truth = batch_data["label"][0].cpu().numpy()
 
         # Performance
-        patient_dice = {"Patient": patient_path[0]}
-        print('Patient: ', patient_dice["Patient"])
+        patient_metrics = {"Patient": patient_path[0]}
         for tissue_type in [1, 2, 4]:
-            dice_score = compute_dice_score_per_tissue(seg_out, ground_truth, tissue_type)
-            patient_dice[f"Dice_{tissue_type}"] = dice_score
-            tissue_averages[tissue_type].append(dice_score)
-            print(f'\t Dice score for {tissue_type}: {dice_score}')
+            dice_score = compute_dice_score_per_tissue(
+                seg_out, ground_truth, tissue_type
+            )
+            hd95 = compute_hd95(seg_out, ground_truth, tissue_type)
+            sensitivity = compute_sensitivity(seg_out, ground_truth, tissue_type)
+            composite_score = calculate_composite_score(
+                dice_score, hd95, sensitivity, weights
+            )
 
-        patient_scores.append(patient_dice)
+            # Store metrics
+            patient_metrics[f"Dice_{tissue_type}"] = dice_score
+            patient_metrics[f"HD95_{tissue_type}"] = hd95
+            patient_metrics[f"Sensitivity_{tissue_type}"] = sensitivity
+            patient_metrics[f"Composite_Score_{tissue_type}"] = composite_score
 
-        # Visualization
-        slice_num = 90
-        image_slice = (
-            image[0, 0, slice_num].cpu().numpy()
-        )  
-        ground_truth_slice = (
-            ground_truth[0, :, :, slice_num]
-        )  
-        predicted_slice = seg[0, :, :, slice_num]
-        visualize_slices(
-            image_slice, ground_truth_slice, predicted_slice, patient_path, slice_num
-        )
+            # Update tissue averages
+            tissue_averages[tissue_type]["Dice"].append(dice_score)
+            tissue_averages[tissue_type]["HD95"].append(hd95)
+            tissue_averages[tissue_type]["Sensitivity"].append(sensitivity)
+            tissue_averages[tissue_type]["Composite_Score"].append(composite_score)
 
-# Convert individual scores to a DataFrame and save as CSV
+        patient_scores.append(patient_metrics)
+        print(patient_metrics)
+
+        torch.cuda.empty_cache()
+
+        # # Visualization
+        # slice_num = 90
+        # image_slice = (
+        #     image[0, 0, slice_num].cpu().numpy()
+        # )
+        # ground_truth_slice = (
+        #     ground_truth[:, :, slice_num]
+        # )
+        # predicted_slice = seg[0, :, :, slice_num]
+        # visualize_slices(
+        #     image_slice, ground_truth_slice, predicted_slice, patient_path, slice_num
+        # )
+
 df_patient_scores = pd.DataFrame(patient_scores)
-df_patient_scores.to_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet/patient_dice_scores.csv", index=False)
+df_patient_scores.to_csv(os.path.join(base_path, "patient_scores_swinunetr.csv"), index=False)
 
-# Calculate average scores for each tissue type and save as a separate CSV
+def mean_excluding_inf(values):
+    finite_values = [v for v in values if not np.isinf(v)]
+    return np.mean(finite_values) if finite_values else np.inf
+
+
 avg_scores = {
     "Tissue": ["NCR_(1)", "ED_(2)", "ET_(4)"],
     "Average Dice": [
-        np.mean(tissue_averages[1]),
-        np.mean(tissue_averages[2]),
-        np.mean(tissue_averages[4])
-    ]
+        np.mean(tissue_averages[1]["Dice"]),
+        np.mean(tissue_averages[2]["Dice"]),
+        np.mean(tissue_averages[4]["Dice"]),
+    ],
+    "Average HD95": [
+        mean_excluding_inf(tissue_averages[1]["HD95"]),
+        mean_excluding_inf(tissue_averages[2]["HD95"]),
+        mean_excluding_inf(tissue_averages[4]["HD95"]),
+    ],
+    "Average Sensitivity": [
+        np.mean(tissue_averages[1]["Sensitivity"]),
+        np.mean(tissue_averages[2]["Sensitivity"]),
+        np.mean(tissue_averages[4]["Sensitivity"]),
+    ],
+    "Average Composite Score": [
+        np.mean(tissue_averages[1]["Composite_Score"]),
+        np.mean(tissue_averages[2]["Composite_Score"]),
+        np.mean(tissue_averages[4]["Composite_Score"]),
+    ],
 }
 df_avg_scores = pd.DataFrame(avg_scores)
-df_avg_scores.to_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet/average_dice_scores.csv", index=False)
+df_avg_scores.to_csv(os.path.join(base_path, "average_scores_swinunetr.csv"), index=False)
 
-print("Saved individual and average Dice scores.")
+print("Saved individual and average metrics.")
