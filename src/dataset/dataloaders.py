@@ -54,10 +54,10 @@ def get_loaders(batch_size, train_folder, val_folder, roi):
 
     # Create data loaders
     local_train_loader = data.DataLoader(
-        mc_train_ds, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True
+        mc_train_ds, batch_size=batch_size, shuffle=True, num_workers=6, pin_memory=True
     )
     val_loader = data.DataLoader(
-        val_ds, batch_size=1, shuffle=False, num_workers=8, pin_memory=True
+        val_ds, batch_size=1, shuffle=False, num_workers=6, pin_memory=True
     )
 
     return local_train_loader, val_loader
@@ -96,7 +96,7 @@ def load_test_data(test_folder, batch_size=1):
         test_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=6,
+        num_workers=1,
         pin_memory=True,
     )
 
