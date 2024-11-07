@@ -34,7 +34,7 @@ def get_val_transforms():
     val_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
+            # transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),

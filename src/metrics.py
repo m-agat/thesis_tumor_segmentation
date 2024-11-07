@@ -12,6 +12,7 @@ def compute_dice_score(prediction, ground_truth):
 
     if total == 0:
         return 1.0  # If both prediction and ground truth have no foreground, Dice is perfect
+    
     return (2.0 * intersection) / total
 
 def compute_dice_score_per_tissue(prediction, ground_truth, tissue_type):
@@ -45,6 +46,7 @@ def compute_model_weights(dice_scores):
     if total_score == 0:
         return np.ones(len(dice_scores)) / len(dice_scores)  # If no dice score, equal weights
     return dice_scores / total_score  # Normalize so that weights sum to 1
+
 
 def load_dice_scores(csv_path):
     """
