@@ -62,42 +62,62 @@ def compute_hd95(prediction, ground_truth, tissue_type, batch_size=10000):
 
 
 def compute_sensitivity(prediction, ground_truth, tissue_type):
-    """
-    Compute the Sensitivity (Recall) for a specific tissue type.
-    """
     pred_tissue = (prediction == tissue_type).astype(np.float32)
     gt_tissue = (ground_truth == tissue_type).astype(np.float32)
     
     true_positive = np.sum(pred_tissue * gt_tissue)
     false_negative = np.sum(gt_tissue * (1 - pred_tissue))
-    
-    if true_positive + false_negative == 0:
-        return 1.0  # Perfect score if no relevant tissue exists
+
+    if np.sum(gt_tissue) == 0:
+        return 0.0  # Set to 0 if the tissue is absent in the ground truth
     
     return true_positive / (true_positive + false_negative)
 
 def compute_specificity(prediction, ground_truth, tissue_type):
-    """
-    Compute the Specificity for a specific tissue type.
-    """
     pred_tissue = (prediction == tissue_type).astype(np.float32)
     gt_tissue = (ground_truth == tissue_type).astype(np.float32)
     
     true_negative = np.sum((1 - pred_tissue) * (1 - gt_tissue))
     false_positive = np.sum(pred_tissue * (1 - gt_tissue))
-    
-    if true_negative + false_positive == 0:
-        return 1.0  # Perfect score if no relevant tissue exists
+
+    if np.sum(1 - gt_tissue) == 0:
+        return 0.0  # Set to 0 if the tissue is absent in the ground truth
     
     return true_negative / (true_negative + false_positive)
 
 
-def calculate_composite_score(dice, hd95, sensitivity, weights):
+def compute_f1_score(prediction, ground_truth, tissue_type):
+    """
+    Compute the F1 score for a specific tissue type.
+    """
+    pred_tissue = (prediction == tissue_type).astype(np.float32)
+    gt_tissue = (ground_truth == tissue_type).astype(np.float32)
+    
+    true_positive = np.sum(pred_tissue * gt_tissue)
+    false_positive = np.sum(pred_tissue * (1 - gt_tissue))
+    false_negative = np.sum(gt_tissue * (1 - pred_tissue))
+    
+    if true_positive + false_positive == 0 or true_positive + false_negative == 0:
+        return 0.0  # F1 is 0 if no relevant predictions or ground truth are found
+    
+    precision = true_positive / (true_positive + false_positive)
+    recall = true_positive / (true_positive + false_negative)
+    
+    if precision + recall == 0:
+        return 0.0  # F1 is 0 if precision + recall is 0
+    
+    return 2 * (precision * recall) / (precision + recall)
+
+
+def calculate_composite_score(dice, hd95, f1_score, weights):
     # Normalize hd95 (lower is better)
-    hd95 = 1 / (1 + hd95)  # Transform to a 0-1 range where lower HD95 gives higher score
+    if np.isinf(hd95):
+        hd95_score = 0  # Set to 0 if HD95 is infinite (worst case)
+    else:
+        hd95_score = 1 / (1 + hd95)
 
     # Calculate the weighted sum
     return (weights["Dice"] * dice +
-            weights["HD95"] * hd95 +
-            weights["Sensitivity"] * sensitivity 
+            weights["HD95"] * hd95_score +
+            weights["F1"] * f1_score
             )

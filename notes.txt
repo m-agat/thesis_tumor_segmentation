@@ -1,5 +1,4 @@
 TODO:
-- read about how you could include the uncertainty 
 - split the overlay for each tissue
 - overall uncertainty and uncertainty per tissue type 
 
@@ -13,7 +12,6 @@ DONE:
 - we need to know whether one model is better for one tissue type than another (and modalities)
 - spm12, cut12
 - weight the different models when computing uncertainty
-- schedule meeting with alfredo
 - run the preprocessing again but correctly
 
 Notes & Issues:
@@ -41,9 +39,18 @@ I tried to run predictions using an nnUNet on the new data, but some patients ha
 
 Show the nnUNet result on patient ARE
 
-
-
 - !!! uncertainties on the voxel level
 - generate images of one slice for all patients
 - retrain the models on more epochs
 - combine the models (with uncertainties and without): compare the two approaches 
+
+- try histogram filters
+- ask Alfredo about the performance metrics
+
+
+Normalization:
+- segment a tumor (mean of all of the algorithms)
+- create a mask
+- normalize the image with the mask
+- take a map of the verticale
+- take the ventricals to the native space

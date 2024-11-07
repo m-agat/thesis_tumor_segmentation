@@ -28,7 +28,7 @@ print("Model retrieved successfully!")
 # Configuring the script
 config = ScriptRunConfig(
     source_directory='/home/agata/Desktop/thesis_tumor_segmentation/src',
-    script='test/test.py',
+    script='test/performance_metrics.py',
     arguments=['--data_path', data_reference,
                '--model_path', model_reference],
     compute_target=compute_target,
