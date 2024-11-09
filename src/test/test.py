@@ -25,7 +25,7 @@ from utils.metrics import (
 base_path = "./outputs"
 os.makedirs(base_path, exist_ok=True)
 print(f"Output directory created: {base_path}")
-model = models.swinunetr_model
+model = models.segresnet_model
 checkpoint = torch.load(config.model_file_path)
 model.load_state_dict(checkpoint["state_dict"])
 model.to(config.device)

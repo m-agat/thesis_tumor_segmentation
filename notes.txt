@@ -54,3 +54,26 @@ Normalization:
 - normalize the image with the mask
 - take a map of the verticale
 - take the ventricals to the native space
+
+
+
+- location of the tumor 
+- probability of being csf - a map of regions that have smaller of probability of being part of the tumor 
+
+
+# prob_maps = {1: [], 2: [], 4: []}
+
+        # # Generate weighted binary maps for voting
+        # for model_idx, model_pred in enumerate(model_predictions):
+        #     for tissue_idx, tissue_label in enumerate([1, 2, 4]):  
+        #         binary_map = (model_pred[:, tissue_idx] > 0.5).float()  
+        #         weight_expanded = weights[:, model_idx, tissue_idx].view(-1, 1, 1, 1)  
+        #         weighted_vote = binary_map * weight_expanded
+        #         prob_maps[tissue_label].append(weighted_vote.detach().cpu().numpy()) 
+
+        # # Aggregate votes across models and assign final class based on max votes
+        # ensemble_seg = torch.zeros((1, 96, 96, 96), dtype=torch.int8).to(config.device)
+        # for tissue_label, weighted_votes in prob_maps.items():
+        #     total_votes = np.sum(weighted_votes, axis=0)
+        #     tissue_mask = (total_votes > 0.5).astype(np.int8)  
+        #     ensemble_seg[tissue_mask == 1] = tissue_label

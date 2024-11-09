@@ -26,14 +26,14 @@ print(f"Output directory created: {base_path}")
 class_weights = pd.read_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/model_weights.csv", index_col=0).to_dict(orient="index")
 normalized_class_weights = {}
 for tissue in ["1", "2", "4"]:
-    tissue_weights = [class_weights[model_name][int(tissue)] for model_name in class_weights]
+    tissue_weights = [class_weights[model_name][tissue] for model_name in class_weights]
     total_weight = sum(tissue_weights)
     normalized_class_weights[int(tissue)] = {
-        model_name: class_weights[model_name][int(tissue)] / total_weight
+        model_name: class_weights[model_name][tissue] / total_weight
         for model_name in class_weights
     }
 
-print("Normalized weights:\n", normalized_class_weights)
+print(class_weights)
 
 # Define model paths
 model_paths = {
@@ -89,20 +89,20 @@ with torch.no_grad():
             attunet: attunet_inferer, vnet: vnet_inferer
         }
 
-        # Collect weighted probabilities
         for model, inferer in models_inferers.items():
-            prob = torch.sigmoid(inferer(image))[0].cpu().numpy()
+            prob = torch.sigmoid(inferer(image)).cpu().numpy()[0]
             model_name = model_name_map[model]
+
             for tissue in [1, 2, 4]:
                 tissue_index = tissue_channel_map[tissue]
-                tissue_specific_weight = normalized_class_weights[model_name][f"{tissue}"]
-                prob_maps[tissue].append(prob[tissue_index] * tissue_specific_weight)
+                binary_prediction = (prob[tissue_index] > 0.5).astype(np.int8)
+                weighted_prediction = binary_prediction * class_weights[model_name][str(tissue)]
+                prob_maps[tissue].append(weighted_prediction)
 
-        # Calculate final ensemble segmentation by averaging probabilities
         ensemble_seg = np.zeros_like(prob_maps[1][0])
-        for tissue, maps in prob_maps.items():
-            weighted_avg = np.mean(maps, axis=0)
-            tissue_mask = (weighted_avg > 0.5).astype(np.int8)  # Simple thresholding
+        for tissue, weighted_votes in prob_maps.items():
+            total_votes = np.sum(weighted_votes, axis=0)
+            tissue_mask = (total_votes > 0.5).astype(np.int8)
             ensemble_seg[tissue_mask == 1] = tissue
 
         ground_truth = batch_data["label"][0].cpu().numpy()
