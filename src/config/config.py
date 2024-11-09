@@ -21,6 +21,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, help="Path to the dataset")
     parser.add_argument("--model_path", type=str, help="Path to the model directory")
+    parser.add_argument("--swinunetr_path", type=str, help="Path to the swinunetr model directory")
+    parser.add_argument("--segresnet_path", type=str, help="Path to the segresnet model directory")
+    parser.add_argument("--vnet_path", type=str, help="Path to the vnet model directory")
+    parser.add_argument("--attunet_path", type=str, help="Path to the attunet model directory")
     parser.add_argument(
         "--model_name",
         type=str,
@@ -66,6 +70,30 @@ model_file_path = os.path.join(
     args.model_path or config.get("default_model_dir", "/home/agata/Desktop/thesis_tumor_segmentation/results/SwinUNetr"),
     f"{args.model_name}_model.pt",
 )
+model_paths = {
+    "swinunetr": os.path.join(
+        args.swinunetr_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/SwinUNetr",
+        "swinunetr_model.pt"
+        ),
+    "segresnet": os.path.join(
+        args.segresnet_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/SegResNet",
+        "segresnet_model.pt"
+        ),
+    "attentionunet": os.path.join(
+        args.attunet_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet",
+        "attunet_model.pt"
+        ),
+    "vnet": os.path.join(
+        args.vnet_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/VNet",
+        "vnet_model.pt"
+        )
+    }  
+
+# print("Swin UNETR Path:", model_paths["swinunetr"])
+# print("SegResNet Path:", model_paths["segresnet"])
+# print("Attention UNet Path:", model_paths["attentionunet"])
+# print("VNet Path:", model_paths["vnet"])
+
 output_dir = args.output_path
 os.makedirs(output_dir, exist_ok=True)
 
