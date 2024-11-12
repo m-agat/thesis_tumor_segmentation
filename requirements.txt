@@ -1,7 +1,4 @@
 albumentations==1.4.12
-azure-ai-ml==1.20.0
-azureml-core==1.57.0.post1
-azureml-dataset-runtime==1.57.0
 build==1.2.2.post1
 clearml==1.16.5rc0
 cucim-cu12==24.8.0

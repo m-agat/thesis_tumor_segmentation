@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .thesis_env/
+.thesis_env_win/
 *.pth
 
 nnUNet_postprocessed/

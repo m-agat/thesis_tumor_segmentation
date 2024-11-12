@@ -1,6 +1,9 @@
 import torch
 import numpy as np
 from tqdm import tqdm
+import sys
+sys.path.append("../")
+import config.config as config
 
 def enable_dropout(model):
     """
@@ -28,10 +31,9 @@ def test_time_dropout_inference(model, input_data, model_inferer, n_iterations=2
     enable_dropout(model)  # Enable dropout layers
 
     all_outputs = []
-    with torch.no_grad():
+    with torch.no_grad(), torch.cuda.amp.autocast():
         for _ in tqdm(range(n_iterations), desc="Predicting with TTD.."):
-            # Use sliding window inference with enabled dropout
-            output = torch.sigmoid(model_inferer(input_data))
+            output = torch.sigmoid(model_inferer(input_data)).to(config.device)
             all_outputs.append(output.cpu().numpy())
     
     # Convert to NumPy array for easier manipulation

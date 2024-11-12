@@ -3,6 +3,9 @@ import os
 import json
 import argparse
 import random
+import platform
+import re
+import subprocess
 import torch
 from torch.utils.data import DataLoader, Subset
 
@@ -14,7 +17,33 @@ def load_config(file_path=None):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = file_path or os.path.join(base_dir, "config.json")
     with open(file_path, "r") as f:
-        return json.load(f)
+        config = json.load(f)
+    # Convert paths in config to WSL format if necessary
+    if platform.system() == "Linux" and "microsoft" in platform.uname().release:
+        for key in ["root_dir_local", "default_model_dir"]:
+            if key in config:
+                config[key] = convert_path(config[key])
+    return config
+
+def convert_path(path):
+    """Convert a Windows path to WSL format if needed, and return Azure or Linux paths as is."""
+    if path is None:
+        return None
+
+    # If the path is already in a WSL/Linux format or is an Azure URL, return it as is
+    if path.startswith("/") or path.startswith("https://"):
+        return path
+
+    # Convert Windows-style paths to WSL format
+    if re.match(r"^[a-zA-Z]:\\", path):
+        try:
+            result = subprocess.run(['wslpath', '-u', path], capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            print(f"Error converting path: {e}")
+            return path  # Return original path if conversion fails
+
+    return path
 
 # Parse command-line arguments
 def parse_args():
@@ -57,45 +86,53 @@ args = parse_args()
 config = load_config()
 
 # Set paths based on args or config.json
-root_dir = args.data_path or config.get(
-    "root_dir_local",
-    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge",
-)
-train_folder = os.path.join(root_dir, "train") if args.data_path else os.path.join(root_dir, "split/train")
-val_folder = os.path.join(root_dir, "val") if args.data_path else os.path.join(root_dir, "split/val")
-test_folder = os.path.join(root_dir, "test") if args.data_path else os.path.join(root_dir, "split/test")
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# Define root directory for data with priority: args -> config -> project_root default
+root_dir = args.data_path or config.get("root_dir_local", "/home/magata/data/brats2021challenge")
 
-# Model and output paths
+# Define train, val, and test folders relative to root_dir
+train_folder = convert_path(os.path.join(root_dir, config.get("train_subdir", "split/train")))
+val_folder = convert_path(os.path.join(root_dir, config.get("val_subdir", "split/val")))
+test_folder = convert_path(os.path.join(root_dir, config.get("test_subdir", "split/test")))
+
+# Model paths
+default_model_dir = convert_path(
+    config.get("default_model_dir") or os.path.join(project_root, "results", "SwinUNetr")
+)
 model_file_path = os.path.join(
-    args.model_path or config.get("default_model_dir", "/home/agata/Desktop/thesis_tumor_segmentation/results/SwinUNetr"),
+    args.model_path or config.get("default_model_dir", "/home/magata/results/SwinUNetr"),
     f"{args.model_name}_model.pt",
 )
 model_paths = {
     "swinunetr": os.path.join(
-        args.swinunetr_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/SwinUNetr",
+        args.swinunetr_path or "/home/magata/results/SwinUNetr",
         "swinunetr_model.pt"
         ),
     "segresnet": os.path.join(
-        args.segresnet_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/SegResNet",
+        args.segresnet_path or "/home/magata/results/SegResNet",
         "segresnet_model.pt"
         ),
     "attentionunet": os.path.join(
-        args.attunet_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet",
+        args.attunet_path or "/home/magata/results/AttentionUNet",
         "attunet_model.pt"
         ),
     "vnet": os.path.join(
-        args.vnet_path or "/home/agata/Desktop/thesis_tumor_segmentation/results/VNet",
+        args.vnet_path or "/home/magata/results/VNet",
         "vnet_model.pt"
         )
     }  
 
-# print("Swin UNETR Path:", model_paths["swinunetr"])
-# print("SegResNet Path:", model_paths["segresnet"])
-# print("Attention UNet Path:", model_paths["attentionunet"])
-# print("VNet Path:", model_paths["vnet"])
-
 output_dir = args.output_path
 os.makedirs(output_dir, exist_ok=True)
+
+print("Project root:", project_root)
+print("Root directory for data:", root_dir)
+print("Train folder:", train_folder)
+print("Validation folder:", val_folder)
+print("Test folder:", test_folder)
+print("Output directory:", output_dir)
+print("Default model path:", model_file_path)
+print("All model paths:", model_paths)
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -110,6 +147,7 @@ infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.5)
 # Initialize data loaders
 train_loader, val_loader = dataloaders.get_loaders(batch_size, train_folder, val_folder, roi)
 test_loader = dataloaders.load_test_data(test_folder)
+print("Data loaders loaded")
 
 # Helper function to create a subset of a DataLoader
 def create_subset(data_loader, subset_size=10, shuffle=True):
