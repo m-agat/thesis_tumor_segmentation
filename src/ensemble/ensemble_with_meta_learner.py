@@ -93,7 +93,6 @@ tissue_types = {1: "NCR", 2: "ED", 4: "ET"}
 num_classes = len(class_labels)
 threshold = 0.5
 feature_scaler = StandardScaler()  # For feature scaling
-scaler = GradScaler()  # For mixed precision scaling
 
 def objective(trial):
     # Sample hyperparameters
@@ -138,8 +137,7 @@ def objective(trial):
                         overlap=config.infer_overlap,
                     )
                     
-                    with autocast():
-                        prob = torch.sigmoid(model_inferer(image)).to(config.device)
+                    prob = torch.sigmoid(model_inferer(image)).to(config.device)
                     seg = (prob[0].detach().cpu().numpy() > threshold).astype(np.int8)
                     seg_out = np.zeros(
                         (seg.shape[1], seg.shape[2], seg.shape[3]), dtype=np.int8
@@ -203,36 +201,35 @@ def objective(trial):
             standardized_features = feature_scaler.transform(combined_features_np)
             combined_features_tensor = torch.tensor(standardized_features, dtype=torch.float32, device=config.device)
 
-            with autocast():
-                # Predict weights
-                predicted_weights = meta_learner(combined_features_tensor)
-                
-                # Initialize weighted votes as tensor on correct device
-                weighted_votes = torch.zeros((len(class_labels),) + model_predictions[0].shape, device=config.device) 
+            # Predict weights
+            predicted_weights = meta_learner(combined_features_tensor)
+            
+            # Initialize weighted votes as tensor on correct device
+            weighted_votes = torch.zeros((len(class_labels),) + model_predictions[0].shape, device=config.device) 
 
-                # Apply weighted voting for each tissue class (excluding background)
-                for class_idx in class_labels[1:]:  # Skip background class (class_idx 0); [1, 2, 4] 
-                    class_vote_idx = class_labels.index(class_idx)
-                    for model_idx, model_seg in enumerate(model_predictions):
-                        tissue_weight = predicted_weights[0, model_idx, class_vote_idx - 1].item()  # Get weight for tissue
-                        weighted_votes[class_vote_idx] += (torch.tensor(model_seg == class_idx, device=config.device) * tissue_weight)
+            # Apply weighted voting for each tissue class (excluding background)
+            for class_idx in class_labels[1:]:  # Skip background class (class_idx 0); [1, 2, 4] 
+                class_vote_idx = class_labels.index(class_idx)
+                for model_idx, model_seg in enumerate(model_predictions):
+                    tissue_weight = predicted_weights[0, model_idx, class_vote_idx - 1].item()  # Get weight for tissue
+                    weighted_votes[class_vote_idx] += (torch.tensor(model_seg == class_idx, device=config.device) * tissue_weight)
 
-                # Determine tumor class with highest weighted vote per voxel
-                final_segmentation_indices = torch.argmax(weighted_votes[1:], dim=0) + 1  
+            # Determine tumor class with highest weighted vote per voxel
+            final_segmentation_indices = torch.argmax(weighted_votes[1:], dim=0) + 1  
 
-                # Apply background where votes are below threshold
-                background_mask = (weighted_votes[1:].max(dim=0).values <= threshold)
-                final_segmentation = torch.zeros_like(final_segmentation_indices, dtype=torch.int32)
-                for i, class_label in enumerate(class_labels[1:]):
-                    final_segmentation[final_segmentation_indices == i + 1] = class_label
-                final_segmentation[background_mask] = 0
+            # Apply background where votes are below threshold
+            background_mask = (weighted_votes[1:].max(dim=0).values <= threshold)
+            final_segmentation = torch.zeros_like(final_segmentation_indices, dtype=torch.int32)
+            for i, class_label in enumerate(class_labels[1:]):
+                final_segmentation[final_segmentation_indices == i + 1] = class_label
+            final_segmentation[background_mask] = 0
 
-                # Calculate Dice score and optimize
-                loss = dice_loss(final_segmentation.unsqueeze(0), ground_truth)
+            # Calculate Dice score and optimize
+            loss = dice_loss(final_segmentation.unsqueeze(0), ground_truth)
+            loss = loss.requires_grad_()  # Ensures it has grad_fn
+            loss.backward()
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
 
             # Accumulate loss for this batch
             total_loss += loss.item()
