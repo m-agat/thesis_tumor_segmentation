@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .thesis_env/
 .thesis_env_win/
+outputs/
 *.pth
 
 nnUNet_postprocessed/
@@ -22,6 +23,7 @@ figures/
 *.yml
 *.json
 *.csv
+*.pkl
 
 
 # C extensions
