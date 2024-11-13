@@ -20,7 +20,6 @@ from mri_feature_extraction import extract_features_from_tensor
 from sklearn.preprocessing import StandardScaler
 from monai.metrics import DiceMetric
 import optuna 
-from torch.cuda.amp import autocast, GradScaler
 
 # Set base output directory
 base_path = config.output_dir

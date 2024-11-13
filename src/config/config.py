@@ -65,13 +65,13 @@ def parse_args():
         "--output_path", type=str, default="./outputs", help="Path to save output files"
     )
     parser.add_argument(
-        "--roi", type=int, nargs=3, default=[96, 96, 96], help="Region of interest size"
+        "--roi", type=int, nargs=3, default=[64, 64, 64], help="Region of interest size"
     )
     parser.add_argument(
         "--batch_size", type=int, default=1, help="Batch size for data loaders"
     )
     parser.add_argument(
-        "--sw_batch_size", type=int, default=2, help="Sliding window batch size"
+        "--sw_batch_size", type=int, default=1, help="Sliding window batch size"
     )
     parser.add_argument(
         "--infer_overlap", type=float, default=0.5, help="Sliding window overlap"
@@ -139,10 +139,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.cuda.empty_cache()
 
 # Parameters
-roi = tuple(args.roi if args.roi else config.get("roi", [96, 96, 96]))
+roi = tuple(args.roi if args.roi else config.get("roi", [64, 64, 64]))
 batch_size = args.batch_size or config.get("batch_size", 1)
-sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 2)
-infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.5)
+sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 1)
+infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.6)
 
 # Initialize data loaders
 train_loader, val_loader = dataloaders.get_loaders(batch_size, train_folder, val_folder, roi)

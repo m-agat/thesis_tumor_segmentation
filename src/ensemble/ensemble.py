@@ -77,33 +77,55 @@ tissue_channel_map = {1: 0, 2: 1, 4: 2}
 
 with torch.no_grad():
     for idx, batch_data in enumerate(config.test_loader_subset):
-        image = batch_data["image"]
+        image = batch_data["image"].to(config.device)
         patient_path = batch_data["path"]
         
         print(f"Processing patient {idx + 1}/{len(config.test_loader_subset)}: {patient_path[0]}")
 
         # Inference for each model
-        prob_maps = {1: [], 2: [], 4: []}
         models_inferers = {
-            swinunetr: swinunetr_inferer, segresnet: segresnet_inferer,
-            attunet: attunet_inferer, vnet: vnet_inferer
+            swinunetr: swinunetr_inferer, 
+            segresnet: segresnet_inferer,
+            attunet: attunet_inferer, 
+            vnet: vnet_inferer
         }
 
+        # Get prediction from each model for a given patient
+        individual_case_predictions = []
         for model, inferer in models_inferers.items():
             prob = torch.sigmoid(inferer(image)).cpu().numpy()[0]
-            model_name = model_name_map[model]
+            seg = prob[0].detach().cpu().numpy()
+            seg = (seg > 0.5).astype(np.int8)
+            seg_out = np.zeros((seg.shape[1], seg.shape[2], seg.shape[3]))
+            seg_out[seg[1] == 1] = 2 # ED
+            seg_out[seg[0] == 1] = 1 # NCR
+            seg_out[seg[2] == 1] = 4 # ET
+            individual_case_predictions.append(seg_out)
+        
+        individual_case_predictions = np.array(individual_case_predictions, dtype=np.int32) # shape: [num_models, H, W, D]
 
-            for tissue in [1, 2, 4]:
-                tissue_index = tissue_channel_map[tissue]
-                binary_prediction = (prob[tissue_index] > 0.5).astype(np.int8)
-                weighted_prediction = binary_prediction * class_weights[model_name][str(tissue)]
-                prob_maps[tissue].append(weighted_prediction)
+        # Weighted majority voting ensemble 
+        # Initialize an array to store weighted votes for all classes
+        class_labels = [0, 1, 2, 4] # 0: background, 1: NCR, 2: ED, 4: ET
+        num_classes = len(class_labels)
+        weighted_votes = np.zeros((num_classes,) + individual_case_predictions[0].shape, dtype=np.float32)  # Shape: (num_classes, H, W, D)
 
-        ensemble_seg = np.zeros_like(prob_maps[1][0])
-        for tissue, weighted_votes in prob_maps.items():
-            total_votes = np.sum(weighted_votes, axis=0)
-            tissue_mask = (total_votes > 0.5).astype(np.int8)
-            ensemble_seg[tissue_mask == 1] = tissue
+        for tissue_type in class_labels:
+            # Map class labels [0, 1, 2, 4] to indices 0, 1, 2, 3 in the weighted_votes array
+            class_vote_idx = class_labels.index(tissue_type)
+            
+            for model_idx, model_pred in enumerate(individual_case_predictions):
+                model_name = list(model_name_map.keys())[model_idx]
+                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * normalized_class_weights[tissue_type][model_name]
+
+        # THE CLASS WITH THE HIGHEST WEIGHTED VOTE IS SELECTED FOR EACH VOXEL 
+        # This will give us the index in class_labels (0 to 3), so we need to map it back to the original labels (0, 1, 2, 4)
+        final_segmentation_indices = np.argmax(weighted_votes, axis=0)
+
+        # Map the indices back to the original class labels (0, 1, 2, 4)
+        final_segmentation = np.zeros_like(final_segmentation_indices, dtype=np.int32)
+        for i, class_label in enumerate(class_labels):
+            final_segmentation[final_segmentation_indices == i] = class_label
 
         ground_truth = batch_data["label"][0].cpu().numpy()
 
@@ -111,7 +133,7 @@ with torch.no_grad():
         original_image_path = os.path.join(config.test_folder, patient_path[0], f"{patient_path[0]}_flair.nii.gz")
         original_nifti = nib.load(original_image_path)
         affine = original_nifti.affine
-        ensemble_nifti = nib.Nifti1Image(ensemble_seg, affine)
+        ensemble_nifti = nib.Nifti1Image(final_segmentation, affine)
         save_path = os.path.join(base_path, f"{patient_path[0]}_ensemble_segmentation.nii.gz")
         nib.save(ensemble_nifti, save_path)
         print(f"Saved ensemble segmentation for patient {patient_path[0]} at {save_path}")
