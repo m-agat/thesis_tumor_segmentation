@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument(
         "--model_name",
         type=str,
-        choices=["swinunetr", "segresnet", "vnet", "attentionunet"],
+        choices=["swinunetr", "segresnet", "vnet", "attunet"],
         default="swinunetr",
         help="Model name to load",
     )
@@ -71,7 +71,7 @@ def parse_args():
         "--batch_size", type=int, default=1, help="Batch size for data loaders"
     )
     parser.add_argument(
-        "--sw_batch_size", type=int, default=2, help="Sliding window batch size"
+        "--sw_batch_size", type=int, default=1, help="Sliding window batch size"
     )
     parser.add_argument(
         "--infer_overlap", type=float, default=0.5, help="Sliding window overlap"
@@ -112,7 +112,7 @@ model_paths = {
         args.segresnet_path or "/home/magata/results/SegResNet",
         "segresnet_model.pt"
         ),
-    "attentionunet": os.path.join(
+    "attunet": os.path.join(
         args.attunet_path or "/home/magata/results/AttentionUNet",
         "attunet_model.pt"
         ),
@@ -139,10 +139,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.cuda.empty_cache()
 
 # Parameters
-roi = tuple(args.roi if args.roi else config.get("roi", [96, 96, 96]))
+roi = tuple(args.roi if args.roi else config.get("roi", [64, 64, 64]))
 batch_size = args.batch_size or config.get("batch_size", 1)
-sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 2)
-infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.5)
+sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 1)
+infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.6)
 
 # Initialize data loaders
 train_loader, val_loader = dataloaders.get_loaders(batch_size, train_folder, val_folder, roi)
@@ -173,7 +173,7 @@ val_loader_subset = create_subset(val_loader, subset_size=args.subset_size)
 test_loader_subset = create_subset(test_loader, subset_size=args.subset_size)
 
 # Initialize specific patient loader for testing
-patient_id_to_find = "BraTS2021_01532"  # Modify as needed
+patient_id_to_find = "BraTS2021_01339"  # Modify as needed
 test_loader_patient = find_patient_by_id(patient_id_to_find, test_loader)
 
 # Set attributes to be accessible in the main code
