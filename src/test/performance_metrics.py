@@ -37,8 +37,8 @@ def load_model():
     model_map = {
         "swinunetr": lambda: models.swinunetr_model,
         "segresnet": lambda: models.segresnet_model,
-        "vnet": lambda: models.vnet_model(),
-        "attentionunet": lambda: models.attunet_model,
+        "vnet": lambda: models.vnet_model,
+        "attunet": lambda: models.attunet_model,
     }
     model = model_map[config.model_name]()
     checkpoint = torch.load(config.model_file_path, map_location=config.device)
@@ -78,14 +78,6 @@ intermediate_dir = os.path.join(config.output_dir, "intermediate_tensors")
 roc_data_dir = os.path.join(config.output_dir, "roc_data")
 os.makedirs(roc_data_dir, exist_ok=True)
 
-roc_save_interval = 2
-roc_save_path = os.path.join(roc_data_dir, "roc_data.pkl")
-if not os.path.exists(roc_save_path):
-    with open(roc_save_path, 'wb') as f:
-        initial_data = {"y_true_dict": {label: [] for label in class_labels},
-                        "y_score_dict": {label: [] for label in class_labels}}
-        pickle.dump(initial_data, f)
-
 os.makedirs(intermediate_dir, exist_ok=True)
 tracemalloc.start()
 
@@ -105,6 +97,7 @@ with torch.no_grad():
         with autocast():
             prob = torch.sigmoid(model_inferer_test(image))
         del image
+        gc.collect()
         # print(f"Probability output shape for patient {patient_path[0]}: {prob.shape}")
         seg = prob[0].detach().cpu().numpy()
         seg = (seg > 0.5).astype(np.int8)
@@ -115,47 +108,6 @@ with torch.no_grad():
         seg_out[seg[2] == 1] = 4
 
         ground_truth = batch_data["label"][0].cpu().numpy()
-
-        # Accumulate true labels and probabilities for each tissue type
-        for channel, tissue_type in output_channel_to_class_label.items():
-            tissue_true = (ground_truth == tissue_type).astype(np.int8)
-            
-            y_true_dict[tissue_type].extend(tissue_true)
-            y_score_dict[tissue_type].extend(prob[0][channel].detach().cpu().numpy())
-
-        # Add labels and probabilities for the background as well
-        background_prob = 1 - np.max(prob[0].cpu().numpy(), axis=0)
-        background_true = (ground_truth == 0).astype(np.int8)
-
-        y_true_dict[0].extend(background_true)  
-        y_score_dict[0].extend(background_prob)
-
-        if idx % roc_save_interval == 0:
-            print("Memory usage before saving ROC data:")
-            print_memory_usage()
-
-            # Load existing data from the pickle
-            with open(roc_save_path, 'rb') as f:
-                existing_data = pickle.load(f)
-            
-            # Append new data to the existing dictionaries
-            for label in class_labels:
-                existing_data["y_true_dict"][label].extend(y_true_dict[label])
-                existing_data["y_score_dict"][label].extend(y_score_dict[label])
-
-            # Save the updated data back to the same pickle file
-            with open(roc_save_path, 'wb') as f:
-                pickle.dump(existing_data, f, protocol=4)
-
-            print(f"Updated ROC data saved to {roc_save_path}")
-
-            # Clear dictionaries and reset for the next interval
-            y_true_dict = {label: [] for label in class_labels}
-            y_score_dict = {label: [] for label in class_labels}
-            gc.collect()
-
-            print("Memory usage after saving ROC data:")
-            print_memory_usage()
 
         patient_metrics = {"Patient": patient_path[0]}
         for tissue_type in class_labels:
@@ -210,7 +162,7 @@ with torch.no_grad():
         print_memory_usage()
 
         # Memory cleanup
-        del ground_truth, prob, seg, seg_out
+        del ground_truth, prob, seg, seg_out, batch_data
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -231,13 +183,6 @@ with torch.no_grad():
             
             patient_scores.clear()
             gc.collect()
-
-            # snapshot = tracemalloc.take_snapshot()
-            # top_stats = snapshot.statistics('lineno')
-
-            # print("[ Top 10 memory consuming lines ]")
-            # for stat in top_stats[:10]:
-            #     print(stat)
             
 
 # Final save if there are remaining entries in patient_scores
@@ -246,42 +191,6 @@ if patient_scores:
         results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
     )
     print(f"Saved final results to {results_save_path}")
-
-# Calculate and plot ROC AUC for each tissue type
-print("Calculating and plotting ROC AUC per tissue type")
-
-# Load the full ROC data from the single pickle file
-roc_save_path = os.path.join(roc_data_dir, "roc_data.pkl")
-with open(roc_save_path, 'rb') as f:
-    roc_data = pickle.load(f)
-
-# Separate the true labels and scores from the loaded data
-full_y_true = roc_data["y_true_dict"]
-full_y_score = roc_data["y_score_dict"]
-
-# Calculate ROC AUC and plot for each tissue type
-for tissue_type in class_labels:
-    try:
-        # Flatten arrays if needed
-        y_true_flat = np.array(full_y_true[tissue_type]).ravel()
-        y_score_flat = np.array(full_y_score[tissue_type]).ravel()
-        
-        # Calculate ROC AUC
-        roc_auc = roc_auc_score(y_true_flat, y_score_flat)
-        print(f"ROC AUC for tissue {tissue_type}: {roc_auc}")
-
-        # Plot ROC curve
-        fpr, tpr, _ = roc_curve(y_true_flat, y_score_flat)
-        plt.figure()
-        plt.plot(fpr, tpr, label=f'Tissue {tissue_type} (AUC = {roc_auc:.2f})')
-        plt.xlabel('False Positive Rate')
-        plt.ylabel('True Positive Rate')
-        plt.title(f"ROC Curve for Tissue Type {tissue_type} ({config.model_name})")
-        plt.legend(loc="lower right")
-        plt.savefig(os.path.join(config.output_dir, f"roc_curve_tissue_{tissue_type}_{config.model_name}.png"))
-        print(f"ROC curve for tissue {tissue_type} saved successfully")
-    except Exception as e:
-        print(f"Error calculating or plotting ROC AUC for tissue {tissue_type}: {e}")
 
 print("Processing complete. All metrics saved.")
 

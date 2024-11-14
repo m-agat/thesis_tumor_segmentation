@@ -11,15 +11,18 @@ import numpy as np
 import pandas as pd
 
 # Load model weights
-class_weights = pd.read_csv("/home/magata/results/model_weights.csv", index_col=0).to_dict(orient="index")
+class_weights = pd.read_csv("/home/magata/results/metrics/model_performance_summary.csv", index_col=0).to_dict(orient="index")
 normalized_class_weights = {}
-for tissue in ["0", "1", "2", "4"]:
-    tissue_weights = [class_weights[model_name][tissue] for model_name in class_weights]
+for tissue_index in [0, 1, 2, 4]:  
+    tissue_key = f"Composite_Score_{tissue_index}"
+    tissue_weights = [class_weights[model_name][tissue_key] for model_name in class_weights]
     total_weight = sum(tissue_weights)
-    normalized_class_weights[int(tissue)] = {
-        model_name: class_weights[model_name][tissue] / total_weight
+    normalized_class_weights[tissue_index] = {
+        model_name: class_weights[model_name][tissue_key] / total_weight
         for model_name in class_weights
     }
+
+print(normalized_class_weights)
 
 # Define function to load models
 def load_model(model_class, checkpoint_path, device):
@@ -33,7 +36,7 @@ def load_model(model_class, checkpoint_path, device):
 # Load models and inference configurations
 swinunetr, swinunetr_inferer = load_model(models.swinunetr_model, config.model_paths["swinunetr"], config.device)
 segresnet, segresnet_inferer = load_model(models.segresnet_model, config.model_paths["segresnet"], config.device)
-attunet, attunet_inferer = load_model(models.attunet_model, config.model_paths["attentionunet"], config.device)
+attunet, attunet_inferer = load_model(models.attunet_model, config.model_paths["attunet"], config.device)
 vnet, vnet_inferer = load_model(models.vnet_model, config.model_paths["vnet"], config.device)
 
 model_name_map = {

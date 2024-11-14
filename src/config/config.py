@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument(
         "--model_name",
         type=str,
-        choices=["swinunetr", "segresnet", "vnet", "attentionunet"],
+        choices=["swinunetr", "segresnet", "vnet", "attunet"],
         default="swinunetr",
         help="Model name to load",
     )
@@ -65,7 +65,7 @@ def parse_args():
         "--output_path", type=str, default="./outputs", help="Path to save output files"
     )
     parser.add_argument(
-        "--roi", type=int, nargs=3, default=[64, 64, 64], help="Region of interest size"
+        "--roi", type=int, nargs=3, default=[96, 96, 96], help="Region of interest size"
     )
     parser.add_argument(
         "--batch_size", type=int, default=1, help="Batch size for data loaders"
@@ -112,7 +112,7 @@ model_paths = {
         args.segresnet_path or "/home/magata/results/SegResNet",
         "segresnet_model.pt"
         ),
-    "attentionunet": os.path.join(
+    "attunet": os.path.join(
         args.attunet_path or "/home/magata/results/AttentionUNet",
         "attunet_model.pt"
         ),

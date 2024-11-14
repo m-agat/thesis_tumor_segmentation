@@ -1,26 +1,23 @@
 import pandas as pd 
+import numpy as np
 
-# Load and prepare model results
+# Average model results
 model_results = {
-    "AttentionUNet": pd.read_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/AttentionUNet/average_dice_scores.csv").T,
-    "SegResNet": pd.read_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/SegResNet/average_dice_scores.csv").T,
-    "SwinUNetr": pd.read_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/SwinUNetr/average_dice_scores.csv").T,
-    "VNet": pd.read_csv("/home/agata/Desktop/thesis_tumor_segmentation/results/VNet/average_dice_scores.csv").T
+    "AttentionUNet": pd.read_csv("/home/magata/results/metrics/patient_performance_scores_attunet.csv").T[1:].replace([np.inf, -np.inf], np.nan).mean(axis=1),
+    "SegResNet": pd.read_csv("/home/magata/results/metrics/patient_performance_scores_segresnet.csv").T[1:].replace([np.inf, -np.inf], np.nan).mean(axis=1),
+    "SwinUNetr": pd.read_csv("/home/magata/results/metrics/patient_performance_scores_swinunetr.csv").T[1:].replace([np.inf, -np.inf], np.nan).mean(axis=1),
+    "VNet": pd.read_csv("/home/magata/results/metrics/patient_performance_scores_vnet.csv").T[1:].replace([np.inf, -np.inf], np.nan).mean(axis=1)
 }
 
-# Prepare and clean up each model's DataFrame
-for model in model_results.keys():
-    new_header = model_results[model].iloc[0] 
-    df = model_results[model][1:] 
-    df.columns = new_header
-    model_results[model] = df
+dfs = [pd.DataFrame(data, columns=[model_name]) for model_name, data in model_results.items()]
 
-# Concatenate into a single DataFrame
-all_model_scores = pd.concat(model_results, names=["Model", "Index"]).reset_index()
-all_model_scores.columns.name = None  # Remove extra column name
-all_model_scores.drop(columns=["Index"], inplace=True)  # Drop "Index" column
+# Concatenate all DataFrames along columns
+final_df = pd.concat(dfs, axis=1).T
 
 # Save to CSV
-output_path = "/home/agata/Desktop/thesis_tumor_segmentation/results/model_weights.csv"
-all_model_scores.to_csv(output_path, index=False)
+output_path = "/home/magata/results/metrics/model_performance_summary.csv"
+final_df.to_csv(output_path, index=True)
 print(f"Results saved to {output_path}")
+
+class_weights = pd.read_csv("/home/magata/results/metrics/model_performance_summary.csv", index_col=0).to_dict(orient="index")
+print(class_weights)
