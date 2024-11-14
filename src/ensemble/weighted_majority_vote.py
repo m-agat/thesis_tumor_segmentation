@@ -9,20 +9,30 @@ from monai.inferers import sliding_window_inference
 from functools import partial
 import numpy as np
 import pandas as pd
+from utils.metrics import (
+    compute_dice_score_per_tissue,
+    compute_hd95,
+    compute_metrics_with_monai,
+    calculate_composite_score,
+)
+from monai.metrics import ConfusionMatrixMetric
 
 # Load model weights
 class_weights = pd.read_csv("/home/magata/results/metrics/model_performance_summary.csv", index_col=0).to_dict(orient="index")
-normalized_class_weights = {}
+amplified_class_weights = {}
+
 for tissue_index in [0, 1, 2, 4]:  
     tissue_key = f"Composite_Score_{tissue_index}"
     tissue_weights = [class_weights[model_name][tissue_key] for model_name in class_weights]
-    total_weight = sum(tissue_weights)
-    normalized_class_weights[tissue_index] = {
-        model_name: class_weights[model_name][tissue_key] / total_weight
-        for model_name in class_weights
+
+    # Calculate softmax weights
+    softmax_weights = np.exp(tissue_weights) / np.sum(np.exp(tissue_weights))
+    
+    amplified_class_weights[tissue_index] = {
+        model_name: softmax_weights[i] for i, model_name in enumerate(class_weights)
     }
 
-print(normalized_class_weights)
+print(amplified_class_weights)
 
 # Define function to load models
 def load_model(model_class, checkpoint_path, device):
@@ -45,6 +55,17 @@ model_name_map = {
     attunet: "AttentionUNet",
     vnet: "VNet"
 }
+
+class_labels = [0, 1, 2, 4]
+output_channel_to_class_label = {0: 1, 1: 2, 2: 4}
+weights = {"Dice": 0.4, "HD95": 0.4, "F1": 0.2}
+patient_scores = []
+total_patients = len(config.test_loader_subset)
+confusion_metric = ConfusionMatrixMetric(
+    metric_name=["sensitivity", "specificity", "f1 score"],
+    include_background=False,
+    compute_sample=False
+)
 
 with torch.no_grad():
     for idx, batch_data in enumerate(config.test_loader_subset):
@@ -91,7 +112,7 @@ with torch.no_grad():
             
             for model_idx, model_pred in enumerate(individual_case_predictions):
                 model_name = list(model_name_map.values())[model_idx]
-                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * normalized_class_weights[tissue_type][model_name]
+                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * amplified_class_weights[tissue_type][model_name]
 
         # THE CLASS WITH THE HIGHEST WEIGHTED VOTE IS SELECTED FOR EACH VOXEL 
         # This will give us the index in class_labels (0 to 3), so we need to map it back to the original labels (0, 1, 2, 4)
@@ -112,3 +133,53 @@ with torch.no_grad():
         save_path = os.path.join(config.output_dir, f"{patient_path[0]}_ensemble_segmentation.nii.gz")
         nib.save(ensemble_nifti, save_path)
         print(f"Saved ensemble segmentation for patient {patient_path[0]} at {save_path}")
+
+        patient_metrics = {"Patient": patient_path[0]}
+        for tissue_type in class_labels:
+            print(f"  Computing metrics for tissue type {tissue_type}")
+            # Compute and store metrics
+            try:
+                dice_score = compute_dice_score_per_tissue(seg_out, ground_truth, tissue_type)
+                print(f"    Dice score for tissue {tissue_type}: {dice_score}")
+            except Exception as e:
+                print(f"    Error computing Dice for tissue {tissue_type}: {e}")
+                dice_score = np.nan
+            try:
+                hd95 = compute_hd95(seg_out, ground_truth, tissue_type)
+                if np.isnan(hd95):
+                    print(f"    HD95 for tissue {tissue_type} not computable, setting to 0")
+                    hd95 = float('inf')
+                print(f"    HD95 for tissue {tissue_type}: {hd95}")
+            except Exception as e:
+                print(f"    Error computing HD95 for tissue {tissue_type}: {e}")
+                hd95 = np.nan
+            try:
+                sensitivity, specificity, f1_score = compute_metrics_with_monai(seg_out, ground_truth, tissue_type, confusion_metric)
+                print(f"    Sensitivity for tissue {tissue_type}: {sensitivity}")
+                print(f"    Specificity for tissue {tissue_type}: {specificity}")
+                print(f"    F1 score for tissue {tissue_type}: {f1_score}")
+                if np.isnan(sensitivity) or np.isnan(f1_score):
+                    print(f"    Sensitivity or F1 for tissue {tissue_type} is not computable, setting to 0")
+                    sensitivity, f1_score = 0.0, 0.0
+            except Exception as e:
+                print(f"    Error computing F1 Score for tissue {tissue_type}: {e}")
+                sensitivity, specificity, f1_score = np.nan, np.nan, np.nan
+            try:
+                composite_score = calculate_composite_score(dice_score, hd95, f1_score, weights)
+                print(f"    Composite score for tissue {tissue_type}: {composite_score}")
+            except Exception as e:
+                print(f"    Error computing Composite Score for tissue {tissue_type}: {e}")
+                composite_score = np.nan
+
+            patient_metrics.update({
+                f"Dice_{tissue_type}": dice_score,
+                f"HD95_{tissue_type}": hd95,
+                f"Sensitivity_{tissue_type}": sensitivity,
+                f"Specificity_{tissue_type}": specificity,
+                f"F1_{tissue_type}": f1_score,
+                f"Composite_Score_{tissue_type}": composite_score,
+            })
+
+        patient_scores.append(patient_metrics)
+        print(f"Metrics for patient {patient_path[0]}: {patient_metrics}")
+

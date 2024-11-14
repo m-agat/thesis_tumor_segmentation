@@ -173,7 +173,7 @@ val_loader_subset = create_subset(val_loader, subset_size=args.subset_size)
 test_loader_subset = create_subset(test_loader, subset_size=args.subset_size)
 
 # Initialize specific patient loader for testing
-patient_id_to_find = "BraTS2021_01532"  # Modify as needed
+patient_id_to_find = "BraTS2021_01339"  # Modify as needed
 test_loader_patient = find_patient_by_id(patient_id_to_find, test_loader)
 
 # Set attributes to be accessible in the main code

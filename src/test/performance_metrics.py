@@ -62,7 +62,7 @@ class_labels = [0, 1, 2, 4]
 output_channel_to_class_label = {0: 1, 1: 2, 2: 4}
 weights = {"Dice": 0.4, "HD95": 0.4, "F1": 0.2}
 patient_scores = []
-total_patients = len(config.val_loader)
+total_patients = len(config.test_loader_patient)
 confusion_metric = ConfusionMatrixMetric(
     metric_name=["sensitivity", "specificity", "f1 score"],
     include_background=False,
@@ -84,10 +84,10 @@ tracemalloc.start()
 print("Starting inference and metric computation")
 
 save_interval=2
-results_save_path = os.path.join(config.output_dir, f"patient_performance_scores_{config.model_name}.csv")
+results_save_path = os.path.join(config.output_dir, f"patient_performance_scores_1339_{config.model_name}.csv")
 
 with torch.no_grad():
-    for idx, batch_data in enumerate(config.val_loader):
+    for idx, batch_data in enumerate(config.test_loader_patient):
         image = batch_data["image"].to(config.device)
         patient_path = batch_data["path"]
 
