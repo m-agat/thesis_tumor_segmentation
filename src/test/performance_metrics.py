@@ -69,10 +69,6 @@ confusion_metric = ConfusionMatrixMetric(
     compute_sample=False
 )
 
-# Initialize containers for ROC AUC computation per tissue type
-y_true_dict = {label: [] for label in class_labels}
-y_score_dict = {label: [] for label in class_labels}
-
 # Intermediate result directory
 intermediate_dir = os.path.join(config.output_dir, "intermediate_tensors")
 roc_data_dir = os.path.join(config.output_dir, "roc_data")
@@ -193,9 +189,4 @@ if patient_scores:
     print(f"Saved final results to {results_save_path}")
 
 print("Processing complete. All metrics saved.")
-
-def mean_excluding_inf(values):
-    finite_values = [v for v in values if not np.isinf(v) and not np.isnan(v)]
-    return np.mean(finite_values) if finite_values else 0.0
-
 
