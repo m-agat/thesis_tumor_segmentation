@@ -19,20 +19,33 @@ from monai.metrics import ConfusionMatrixMetric
 
 # Load model weights
 class_weights = pd.read_csv("/home/magata/results/metrics/model_performance_summary.csv", index_col=0).to_dict(orient="index")
-amplified_class_weights = {}
-
+normalized_class_weights = {}
 for tissue_index in [0, 1, 2, 4]:  
     tissue_key = f"Composite_Score_{tissue_index}"
     tissue_weights = [class_weights[model_name][tissue_key] for model_name in class_weights]
+    total_weight = sum(tissue_weights)
+    normalized_class_weights[tissue_index] = {
+        model_name: class_weights[model_name][tissue_key] / total_weight
+        for model_name in class_weights
+    }
+adjustment_factor = 1.05  # a 5% boost
+adjusted_weights = {}
 
-    # Calculate softmax weights
-    softmax_weights = np.exp(tissue_weights) / np.sum(np.exp(tissue_weights))
-    
-    amplified_class_weights[tissue_index] = {
-        model_name: softmax_weights[i] for i, model_name in enumerate(class_weights)
+for tissue_index, models_weights in normalized_class_weights.items():
+    adjusted_weights[tissue_index] = {}
+    for model, weight in models_weights.items():
+        if (model == "SwinUNetr" or (model == "SegResNet" and tissue_index == 1)):  # Example boost condition
+            adjusted_weights[tissue_index][model] = weight * adjustment_factor
+        else:
+            adjusted_weights[tissue_index][model] = weight
+
+    # Re-normalize weights for each tissue
+    total_adjusted_weight = sum(adjusted_weights[tissue_index].values())
+    adjusted_weights[tissue_index] = {
+        model: w / total_adjusted_weight for model, w in adjusted_weights[tissue_index].items()
     }
 
-print(amplified_class_weights)
+print(adjusted_weights)
 
 # Define function to load models
 def load_model(model_class, checkpoint_path, device):
@@ -60,7 +73,7 @@ class_labels = [0, 1, 2, 4]
 output_channel_to_class_label = {0: 1, 1: 2, 2: 4}
 weights = {"Dice": 0.4, "HD95": 0.4, "F1": 0.2}
 patient_scores = []
-total_patients = len(config.test_loader_subset)
+total_patients = len(config.val_loader)
 confusion_metric = ConfusionMatrixMetric(
     metric_name=["sensitivity", "specificity", "f1 score"],
     include_background=False,
@@ -68,11 +81,11 @@ confusion_metric = ConfusionMatrixMetric(
 )
 
 with torch.no_grad():
-    for idx, batch_data in enumerate(config.test_loader_subset):
+    for idx, batch_data in enumerate(config.test_loader_patient):
         image = batch_data["image"].to(config.device)
         patient_path = batch_data["path"]
         
-        print(f"Processing patient {idx + 1}/{len(config.test_loader_subset)}: {patient_path[0]}")
+        print(f"Processing patient {idx + 1}/{len(config.test_loader_patient)}: {patient_path[0]}")
 
         # Inference for each model
         models_inferers = {
@@ -112,7 +125,7 @@ with torch.no_grad():
             
             for model_idx, model_pred in enumerate(individual_case_predictions):
                 model_name = list(model_name_map.values())[model_idx]
-                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * amplified_class_weights[tissue_type][model_name]
+                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * adjusted_weights[tissue_type][model_name]
 
         # THE CLASS WITH THE HIGHEST WEIGHTED VOTE IS SELECTED FOR EACH VOXEL 
         # This will give us the index in class_labels (0 to 3), so we need to map it back to the original labels (0, 1, 2, 4)
