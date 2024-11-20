@@ -152,13 +152,13 @@ with torch.no_grad():
             print(f"  Computing metrics for tissue type {tissue_type}")
             # Compute and store metrics
             try:
-                dice_score = compute_dice_score_per_tissue(seg_out, ground_truth, tissue_type)
+                dice_score = compute_dice_score_per_tissue(final_segmentation, ground_truth, tissue_type)
                 print(f"    Dice score for tissue {tissue_type}: {dice_score}")
             except Exception as e:
                 print(f"    Error computing Dice for tissue {tissue_type}: {e}")
                 dice_score = np.nan
             try:
-                hd95 = compute_hd95(seg_out, ground_truth, tissue_type)
+                hd95 = compute_hd95(final_segmentation, ground_truth, tissue_type)
                 if np.isnan(hd95):
                     print(f"    HD95 for tissue {tissue_type} not computable, setting to 0")
                     hd95 = float('inf')
@@ -167,7 +167,7 @@ with torch.no_grad():
                 print(f"    Error computing HD95 for tissue {tissue_type}: {e}")
                 hd95 = np.nan
             try:
-                sensitivity, specificity, f1_score = compute_metrics_with_monai(seg_out, ground_truth, tissue_type, confusion_metric)
+                sensitivity, specificity, f1_score = compute_metrics_with_monai(final_segmentation, ground_truth, tissue_type, confusion_metric)
                 print(f"    Sensitivity for tissue {tissue_type}: {sensitivity}")
                 print(f"    Specificity for tissue {tissue_type}: {specificity}")
                 print(f"    F1 score for tissue {tissue_type}: {f1_score}")
