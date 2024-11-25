@@ -73,6 +73,7 @@ def align_and_extract_features(model_predictions, image, feature_extraction_func
     region_mask_swinunetr_ET = (seg_swinunetr == 4)  
     region_mask_segresnet_ET = (seg_segresnet == 4)  
 
+    # union approach - combine the predictions from the different models
     masks = {"NCR": np.logical_or(region_mask_swinunetr_NCR, region_mask_segresnet_NCR),
              "ED": np.logical_or(region_mask_swinunetr_ED, region_mask_segresnet_ED),
              "ET": np.logical_or(region_mask_swinunetr_ET, region_mask_segresnet_ET)}
