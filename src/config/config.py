@@ -168,9 +168,9 @@ def find_patient_by_id(patient_id, data_loader):
     )
 
 # Initialize subsets
-train_loader_subset = create_subset(train_loader, subset_size=args.subset_size)
-val_loader_subset = create_subset(val_loader, subset_size=args.subset_size)
-test_loader_subset = create_subset(test_loader, subset_size=args.subset_size)
+# train_loader_subset = create_subset(train_loader, subset_size=args.subset_size)
+# val_loader_subset = create_subset(val_loader, subset_size=args.subset_size)
+# test_loader_subset = create_subset(test_loader, subset_size=args.subset_size)
 
 # Initialize specific patient loader for testing
 patient_id_to_find = "BraTS2021_01339"  # Modify as needed

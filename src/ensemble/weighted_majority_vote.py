@@ -72,13 +72,6 @@ with torch.no_grad():
 
 
         unique_values = np.unique(ground_truth)
-        print(f"Unique values in ground truth: {unique_values}")
-        if np.array_equal(unique_values, [0, 1]):
-            print("Ground truth is binary.")
-            break
-        else:
-            print("Ground truth is not binary.")
-            break
         
         print(f"Processing patient {idx + 1}/{len(config.test_loader_patient)}: {patient_path[0]}")
 
@@ -97,9 +90,9 @@ with torch.no_grad():
             seg = prob[0].detach().cpu().numpy() # batch_size, tissue, H, W, D
             seg = (seg > 0.5).astype(np.int8)
             seg_out = np.zeros((seg.shape[1], seg.shape[2], seg.shape[3]))
-            seg_out[seg[1] == 1] = 2 
-            seg_out[seg[0] == 1] = 1 
-            seg_out[seg[2] == 1] = 4 
+            seg_out[seg[1] == 1] = 2 # ED (Whole Tumor)
+            seg_out[seg[0] == 1] = 1 # NCR/NET (Tumor Core)
+            seg_out[seg[2] == 1] = 4 # ET (Enhancing Tumor)
             individual_case_predictions.append(seg_out)
         
         individual_case_predictions = np.array(individual_case_predictions, dtype=np.int32) # shape: [num_models, H, W, D]

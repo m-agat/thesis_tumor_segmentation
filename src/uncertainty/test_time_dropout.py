@@ -33,7 +33,7 @@ def test_time_dropout_inference(model, input_data, model_inferer, n_iterations=2
     all_outputs = []
     with torch.no_grad(), torch.cuda.amp.autocast():
         for _ in tqdm(range(n_iterations), desc="Predicting with TTD.."):
-            output = torch.sigmoid(model_inferer(input_data)).to(config.device)
+            output = model_inferer(input_data).to(config.device)
             all_outputs.append(output.cpu().numpy())
     
     # Convert to NumPy array for easier manipulation
@@ -45,7 +45,7 @@ def test_time_dropout_inference(model, input_data, model_inferer, n_iterations=2
     
     return mean_output, variance_output
 
-def scale_to_range_0_1(uncertainty_map):
+def scale_to_range_0_100(uncertainty_map):
     min_val = np.min(uncertainty_map)
     max_val = np.max(uncertainty_map)
     
@@ -53,5 +53,5 @@ def scale_to_range_0_1(uncertainty_map):
     if max_val - min_val == 0:
         return np.zeros_like(uncertainty_map)
     
-    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val)
+    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val) * 100
     return scaled_uncertainty_map
