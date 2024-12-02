@@ -80,7 +80,7 @@ tracemalloc.start()
 print("Starting inference and metric computation")
 
 save_interval=2
-results_save_path = os.path.join(config.output_dir, f"patient_performance_scores_1339_{config.model_name}.csv")
+results_save_path = os.path.join(config.output_dir, f"patient_performance_scores_{config.model_name}.csv")
 
 with torch.no_grad():
     for idx, batch_data in enumerate(config.test_loader_patient):
@@ -99,9 +99,9 @@ with torch.no_grad():
         seg = (seg > 0.5).astype(np.int8)
         # print(f"Segmentation output for patient {patient_path[0]}: {seg.shape[0]} channels found.")
         seg_out = np.zeros((seg.shape[1], seg.shape[2], seg.shape[3]))
-        seg_out[seg[1] == 1] = 2
-        seg_out[seg[0] == 1] = 1
-        seg_out[seg[2] == 1] = 4
+        seg_out[seg[0] == 1] = 1 # TC (ET + NCR) -> NCR
+        seg_out[seg[1] == 1] = 2 # WT (ET + NCR + ED) -> ED
+        seg_out[seg[2] == 1] = 4 # ET
 
         ground_truth = batch_data["label"][0].cpu().numpy()
 

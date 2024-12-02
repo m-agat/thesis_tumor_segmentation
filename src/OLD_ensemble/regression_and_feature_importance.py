@@ -16,10 +16,10 @@ def convert_tuple_to_mean(value):
     return value
 
 # Load data
-model = "segresnet"
+model = "swinunetr"
 region = "NCR"
 target_col_name = 'Composite_Score_1'
-features_df = pd.read_csv("./outputs/mri_features.csv")
+features_df = pd.read_csv("./outputs/mri_regional_features.csv")
 performance_df = pd.read_csv(f"/home/magata/results/metrics/patient_performance_scores_{model}.csv")
 
 # Merge features with performance metrics
@@ -30,9 +30,8 @@ merged_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 performance_columns = [col for col in performance_df.columns if col not in ['Patient', target_col_name]]
 columns_to_exclude = ['Patient'] + performance_columns
 
-# region_columns = [col for col in features_df.columns if region in col]
-# features = merged_df[region_columns]
-features = features_df
+region_columns = [col for col in features_df.columns if region in col]
+features = merged_df[region_columns]
 for col in features.columns:
     features[col] = features[col].apply(convert_tuple_to_mean)
 features = features.select_dtypes(include=[np.number])
@@ -66,8 +65,8 @@ print(f"Top 10 features based on feature importance: {selected_importance_featur
 
 # Step 7: Save the final selected features
 final_features_df = pd.DataFrame(selected_importance_features, columns=["Features"])
-final_features_df.to_csv(f"./outputs/ALL_final_features_{model}_{region}_meta_learner.csv", index=False)
-print(f"Final selected features saved to './outputs/ALL_final_features_{model}_{region}_meta_learner.csv'.")
+final_features_df.to_csv(f"./outputs/final_features_{model}_{region}_meta_learner.csv", index=False)
+print(f"Final selected features saved to './outputs/final_features_{model}_{region}_meta_learner.csv'.")
 
 # Train the meta-learner (XGBoost)
 meta_learner = xgb.XGBRegressor(random_state=42, n_estimators=100)
@@ -81,11 +80,11 @@ print(f"Mean Squared Error (Test Set): {mse}")
 print(f"R2 Score (Test Set): {r2}")
 
 # SHAP analysis for feature contribution
-# explainer = shap.TreeExplainer(meta_learner)
-# shap_values = explainer.shap_values(X_test[selected_importance_features])
+explainer = shap.TreeExplainer(meta_learner)
+shap_values = explainer.shap_values(X_test[selected_importance_features])
 
 # # Plot SHAP summary
-# print("Generating SHAP summary plot...")
-# shap.summary_plot(shap_values, X_test[selected_importance_features], feature_names=selected_importance_features, show=False)
-# plt.savefig(f"./outputs/shap_summary_plot_{model}_meta_learner.png", dpi=300, bbox_inches="tight")
-# print("SHAP summary plot saved as 'shap_summary_plot_meta_learner.png' in './outputs/'.")
+print("Generating SHAP summary plot...")
+shap.summary_plot(shap_values, X_test[selected_importance_features], feature_names=selected_importance_features, show=False)
+plt.savefig(f"./outputs/shap_summary_plot_{model}_{region}.png", dpi=300, bbox_inches="tight")
+print(f"SHAP summary plot saved as 'shap_summary_{model}plot.png' in './outputs/'.")

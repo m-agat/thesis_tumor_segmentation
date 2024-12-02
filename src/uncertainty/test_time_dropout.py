@@ -10,7 +10,7 @@ def enable_dropout(model):
     Function to enable the dropout layers during inference.
     """
     for module in model.modules():
-        if isinstance(module, torch.nn.Dropout):
+        if isinstance(module, (torch.nn.Dropout, torch.nn.Dropout2d, torch.nn.Dropout3d)):
             module.train()
 
 def test_time_dropout_inference(model, input_data, model_inferer, n_iterations=20):
@@ -45,7 +45,7 @@ def test_time_dropout_inference(model, input_data, model_inferer, n_iterations=2
     
     return mean_output, variance_output
 
-def scale_to_range_0_100(uncertainty_map):
+def scale_to_range_0_1(uncertainty_map):
     min_val = np.min(uncertainty_map)
     max_val = np.max(uncertainty_map)
     
@@ -53,5 +53,5 @@ def scale_to_range_0_100(uncertainty_map):
     if max_val - min_val == 0:
         return np.zeros_like(uncertainty_map)
     
-    scaled_uncertainty_map = 100 * (uncertainty_map - min_val) / (max_val - min_val)
+    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val)
     return scaled_uncertainty_map

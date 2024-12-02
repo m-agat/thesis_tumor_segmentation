@@ -28,24 +28,6 @@ for tissue_index in [0, 1, 2, 4]:
         model_name: class_weights[model_name][tissue_key] / total_weight
         for model_name in class_weights
     }
-adjustment_factor = 1.05  # a 5% boost
-adjusted_weights = {}
-
-for tissue_index, models_weights in normalized_class_weights.items():
-    adjusted_weights[tissue_index] = {}
-    for model, weight in models_weights.items():
-        if (model == "SwinUNetr" or (model == "SegResNet" and tissue_index == 1)):  # Example boost condition
-            adjusted_weights[tissue_index][model] = weight * adjustment_factor
-        else:
-            adjusted_weights[tissue_index][model] = weight
-
-    # Re-normalize weights for each tissue
-    total_adjusted_weight = sum(adjusted_weights[tissue_index].values())
-    adjusted_weights[tissue_index] = {
-        model: w / total_adjusted_weight for model, w in adjusted_weights[tissue_index].items()
-    }
-
-print(adjusted_weights)
 
 # Define function to load models
 def load_model(model_class, checkpoint_path, device):
@@ -73,17 +55,30 @@ class_labels = [0, 1, 2, 4]
 output_channel_to_class_label = {0: 1, 1: 2, 2: 4}
 weights = {"Dice": 0.4, "HD95": 0.4, "F1": 0.2}
 patient_scores = []
-total_patients = len(config.val_loader)
+total_patients = len(config.test_loader_patient)
 confusion_metric = ConfusionMatrixMetric(
     metric_name=["sensitivity", "specificity", "f1 score"],
     include_background=False,
     compute_sample=False
 )
+save_interval = 1
+results_save_path = os.path.join(config.output_dir, f"patient_performance_scores_ensemble.csv")
 
 with torch.no_grad():
     for idx, batch_data in enumerate(config.test_loader_patient):
         image = batch_data["image"].to(config.device)
         patient_path = batch_data["path"]
+        ground_truth = batch_data["label"][0].cpu().numpy()
+
+
+        unique_values = np.unique(ground_truth)
+        print(f"Unique values in ground truth: {unique_values}")
+        if np.array_equal(unique_values, [0, 1]):
+            print("Ground truth is binary.")
+            break
+        else:
+            print("Ground truth is not binary.")
+            break
         
         print(f"Processing patient {idx + 1}/{len(config.test_loader_patient)}: {patient_path[0]}")
 
@@ -99,23 +94,19 @@ with torch.no_grad():
         individual_case_predictions = []
         for model, inferer in models_inferers.items():
             prob = torch.sigmoid(inferer(image))
-            seg = prob[0].detach().cpu().numpy()
+            seg = prob[0].detach().cpu().numpy() # batch_size, tissue, H, W, D
             seg = (seg > 0.5).astype(np.int8)
             seg_out = np.zeros((seg.shape[1], seg.shape[2], seg.shape[3]))
-            seg_out[seg[1] == 1] = 2 # ED
-            seg_out[seg[0] == 1] = 1 # NCR
-            seg_out[seg[2] == 1] = 4 # ET
+            seg_out[seg[1] == 1] = 2 
+            seg_out[seg[0] == 1] = 1 
+            seg_out[seg[2] == 1] = 4 
             individual_case_predictions.append(seg_out)
         
         individual_case_predictions = np.array(individual_case_predictions, dtype=np.int32) # shape: [num_models, H, W, D]
 
-        # Compute class size weights to adjust the importance of each class
-        # This way we try to account for the class imbalance (e.g. background is significantly bigger than the tumor)
-        # So that the bigger classes do not overtake the predictions 
-
         # Weighted majority voting ensemble 
         # Initialize an array to store weighted votes for all classes
-        class_labels = [0, 1, 2, 4] # 0: background, 1: NCR, 2: ED, 4: ET
+        class_labels = [0, 1, 2, 4] 
         num_classes = len(class_labels)
         weighted_votes = np.zeros((num_classes,) + individual_case_predictions[0].shape, dtype=np.float32)  # Shape: (num_classes, H, W, D)
 
@@ -125,7 +116,7 @@ with torch.no_grad():
             
             for model_idx, model_pred in enumerate(individual_case_predictions):
                 model_name = list(model_name_map.values())[model_idx]
-                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * adjusted_weights[tissue_type][model_name]
+                weighted_votes[class_vote_idx] += (model_pred == tissue_type) * normalized_class_weights[tissue_type][model_name]
 
         # THE CLASS WITH THE HIGHEST WEIGHTED VOTE IS SELECTED FOR EACH VOXEL 
         # This will give us the index in class_labels (0 to 3), so we need to map it back to the original labels (0, 1, 2, 4)
@@ -135,8 +126,6 @@ with torch.no_grad():
         final_segmentation = np.zeros_like(final_segmentation_indices, dtype=np.int32)
         for i, class_label in enumerate(class_labels):
             final_segmentation[final_segmentation_indices == i] = class_label
-
-        ground_truth = batch_data["label"][0].cpu().numpy()
 
         # Save the ensemble segmentation as a nifti file
         original_image_path = os.path.join(config.test_folder, patient_path[0], f"{patient_path[0]}_flair.nii.gz")
@@ -196,3 +185,17 @@ with torch.no_grad():
         patient_scores.append(patient_metrics)
         print(f"Metrics for patient {patient_path[0]}: {patient_metrics}")
 
+        if idx % save_interval == 0:
+            print(f"Saving intermediate results at patient index {idx}")
+            pd.DataFrame(patient_scores).to_csv(
+                results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
+            )
+            print(f"Saved intermediate results to {results_save_path}")
+
+if patient_scores:
+    pd.DataFrame(patient_scores).to_csv(
+        results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
+    )
+    print(f"Saved final results to {results_save_path}")
+
+print("Processing complete. All metrics saved.")
