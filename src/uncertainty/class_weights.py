@@ -13,10 +13,10 @@ dfs = [pd.DataFrame(data, columns=[model_name]) for model_name, data in model_re
 
 # Concatenate all DataFrames along columns
 final_df = pd.concat(dfs, axis=1).T
-
+final_df = final_df.round(3)
 # Save to CSV
 # output_path = "/home/magata/results/metrics/model_performance_summary.csv"
-output_path = "/mnt/c/Users/agata/OneDrive/Pulpit/thesis_tumor_segmentation/results/metrics/model_performance_summary.csv"
+output_path = "/mnt/c/Users/agata/Desktop/thesis_tumor_segmentation/results/metrics/model_performance_summary.csv"
 final_df.to_csv(output_path, index=True)
 print(f"Results saved to {output_path}")
 
