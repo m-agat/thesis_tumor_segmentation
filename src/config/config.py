@@ -8,9 +8,10 @@ import re
 import subprocess
 import torch
 from torch.utils.data import DataLoader, Subset
-
 sys.path.append("../")
 import dataset.dataloaders as dataloaders
+import dataset.dataloaders_crossval as dataloaders_cv
+import dataset.transforms as transforms 
 
 # Load configuration settings from JSON
 def load_config(file_path=None):
@@ -91,6 +92,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 root_dir = args.data_path or config.get("root_dir_local", "/home/magata/data/brats2021challenge")
 
 # Define train, val, and test folders relative to root_dir
+cross_val_folder = convert_path(os.path.join(root_dir, config.get("train_subdir", "split/cross_val_train")))
 train_folder = convert_path(os.path.join(root_dir, config.get("train_subdir", "split/train")))
 val_folder = convert_path(os.path.join(root_dir, config.get("val_subdir", "split/val")))
 test_folder = convert_path(os.path.join(root_dir, config.get("test_subdir", "split/test")))
@@ -148,6 +150,24 @@ infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.6)
 train_loader, val_loader = dataloaders.get_loaders(batch_size, train_folder, val_folder, roi)
 test_loader = dataloaders.load_test_data(test_folder)
 print("Data loaders loaded")
+
+# Cross validation data loaders 
+all_files = dataloaders_cv.read_data_from_folders(cross_val_folder)
+
+# Number of folds for cross-validation
+num_folds = 5  
+
+# Get train/val datasets for each fold
+train_datasets, val_datasets = dataloaders_cv.create_cross_validation_datasets(
+    data_list=all_files,
+    num_folds=num_folds,
+    train_transform=transforms.get_train_transforms(roi),
+    val_transform=transforms.get_val_transforms(),
+)
+
+# Create data loaders for each fold
+fold_loaders = dataloaders.get_data_loaders_for_folds(train_datasets, val_datasets, batch_size)
+print("Cross-Val Data loaders loaded")
 
 # Helper function to create a subset of a DataLoader
 def create_subset(data_loader, subset_size=10, shuffle=True):
