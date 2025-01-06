@@ -38,14 +38,13 @@ model_name_map = {
     swinunetr: "SwinUNetr",
     segresnet: "SegResNet",
     attunet: "AttentionUNet",
-    vnet: "VNet"
 }
 
 # Load model weights
 class_weights = pd.read_csv("/home/magata/results/metrics/model_performance_summary.csv", index_col=0).to_dict(orient="index")
 normalized_class_weights = {}
 for tissue_index in [1, 2, 4]:  
-    tissue_key = f"HD95_{tissue_index}"
+    tissue_key = f"Dice_{tissue_index}"
     tissue_weights = [class_weights[model_name][tissue_key] for model_name in class_weights]
     total_weight = sum(tissue_weights)
     normalized_class_weights[tissue_index] = {
@@ -54,15 +53,15 @@ for tissue_index in [1, 2, 4]:
     }
 
 # MIscellanuous
-class_labels = [0, 1, 2, 4]
-weights = {"Dice": 0.4, "HD95": 0.4, "F1": 0.2}
+class_labels = [1, 2, 4]
+composite_score_weights = {"Dice": 0.4, "HD95": 0.4, "F1": 0.2}
 confusion_metric = ConfusionMatrixMetric(
     metric_name=["sensitivity", "specificity", "f1 score"],
     include_background=False,
     compute_sample=False
 )
 patient_scores = []
-results_save_path = os.path.join(config.output_dir, f"ensemble_performance_var_and_entr.csv")
+results_save_path = os.path.join(config.output_dir, f"ensemble_performance_no_vnet.csv")
 save_interval = 1
 for idx, batch_data in enumerate(config.test_loader):
     # Get data and its path
@@ -81,17 +80,16 @@ for idx, batch_data in enumerate(config.test_loader):
             swinunetr: swinunetr_inferer, 
             segresnet: segresnet_inferer,
             attunet: attunet_inferer, 
-            vnet: vnet_inferer
         }
     
     ensemble_uncertainties = []  # To store uncertainty maps from all models
     ensemble_predictions = []    # To store segmentation maps from all models
     for model, model_inferer in models_inferers.items():
-        mean_pred_ttd, var_pred_ttd = ttd_variance(model, image, model_inferer, n_iterations=3)
-        mean_pred_tta, var_pred_tta = tta_variance(model_inferer, image, config.device, n_iterations=3)
+        mean_pred_ttd, var_pred_ttd = ttd_variance(model, image, model_inferer, n_iterations=20)
+        mean_pred_tta, var_pred_tta = tta_variance(model_inferer, image, config.device, n_iterations=20)
 
-        entr_mean_pred_ttd, entropy_ttd = ttd_entropy(model, image, model_inferer, n_iterations=3)
-        entr_mean_pred_tta, entropy_tta = tta_entropy(model_inferer, image, config.device, n_iterations=3)
+        entr_mean_pred_ttd, entropy_ttd = ttd_entropy(model, image, model_inferer, n_iterations=20)
+        entr_mean_pred_tta, entropy_tta = tta_entropy(model_inferer, image, config.device, n_iterations=20)
         
         # Combine uncertainties
         weight_ttd = 0.25  # Weight for TTD var
@@ -114,52 +112,47 @@ for idx, batch_data in enumerate(config.test_loader):
         )
         combined_prediction_tensor = (combined_prediction_tensor + torch.tensor(entr_mean_pred_ttd, device=config.device) + torch.tensor(entr_mean_pred_tta, device=config.device)) / 3
         combined_prediction = combined_prediction_tensor.cpu().numpy()[0]
-        predicted_labels = (combined_prediction > 0.5).astype(np.int8)
-        print(f"Predicted labels shape: {predicted_labels.shape}")
+        print("Combined prediction shape: ", combined_prediction.shape)
 
-        # Get predicted labels 
-        seg_out = np.zeros((predicted_labels.shape[1], predicted_labels.shape[2], predicted_labels.shape[3]))
-        seg_out[predicted_labels[1] == 1] = 2 # ED (Whole Tumor = ED + NCR + ET)
-        seg_out[predicted_labels[0] == 1] = 1 # NCR/NET (Tumor Core = NCR + ET)
-        seg_out[predicted_labels[2] == 1] = 4 # ET (Enhancing Tumor)
+        ensemble_predictions.append(combined_prediction)
+        ensemble_uncertainties.append(combined_uncertainty)      
 
-        # Assign uncertainties to predicted cells
-        cell_type_uncertainty = np.zeros((predicted_labels.shape[1], predicted_labels.shape[2], predicted_labels.shape[3]))
-        # Weigh the uncertainties by performance scores
-        # for tissue_type, tissue_idx in zip([2, 1, 4], [1, 0, 2]):
-        #     # Fetch the weight for the current model and tissue type
-        #     model_weight = normalized_class_weights[tissue_type][model_name_map[model]]
-            
-        #     # Weigh the uncertainty
-        #     weighted_uncertainty = combined_uncertainty[tissue_idx] * model_weight
-            
-        #     # Assign weighted uncertainty to the corresponding voxels
-        #     cell_type_uncertainty[predicted_labels[tissue_idx] == 1] = weighted_uncertainty[predicted_labels[tissue_idx] == 1]
+    ensemble_predictions = np.stack(ensemble_predictions, axis=0)  # Shape: (num_models, tissues, height, width, depth)
+    ensemble_uncertainties = np.stack(ensemble_uncertainties, axis=0)  # Shape: (num_models, tissues, height, width, depth)
 
-        cell_type_uncertainty[predicted_labels[1] == 1] = combined_uncertainty[1][predicted_labels[1] == 1] # ED (Whole Tumor)
-        cell_type_uncertainty[predicted_labels[0] == 1] = combined_uncertainty[0][predicted_labels[0] == 1] # NCR/NET (Tumor Core)
-        cell_type_uncertainty[predicted_labels[2] == 1] = combined_uncertainty[2][predicted_labels[2] == 1] # ET (Enhancing Tumor) 
+    # Weighted combination
+    weights = 1 / (ensemble_uncertainties + 1e-6)  # Inverse uncertainty as weight
+    weights /= np.sum(weights, axis=0, keepdims=True)  # Normalize weights
+    weighted_probabilities = np.sum(weights * ensemble_predictions, axis=0)  # Shape: (3, height, width, depth)
 
-        uncertainty_map = nib.Nifti1Image(cell_type_uncertainty, affine) 
-        print(f"Shape of uncertainty map: {uncertainty_map.shape}")
-        save_path = os.path.join(config.output_dir, f"{patient_path[0]}_{model_name_map[model]}_uncertainty_map.nii.gz")
-        nib.save(uncertainty_map, save_path)
-        print(f"Saved uncertainty map for patient {patient_path[0]} at {save_path}")
-
-        ensemble_predictions.append(seg_out)
-        ensemble_uncertainties.append(cell_type_uncertainty)      
-
-    ensemble_predictions = np.stack(ensemble_predictions, axis=0)  # Shape: (num_models, height, width, depth)
-    ensemble_uncertainties = np.stack(ensemble_uncertainties, axis=0)  # Shape: (num_models, height, width, depth)
-    print("Shape of ensemble uncertainties: ", ensemble_uncertainties.shape)
-    
-    best_model_indices = np.argmin(ensemble_uncertainties, axis=0)
-    final_segmentation = np.choose(best_model_indices, ensemble_predictions)
+    # Generate final segmentation
+    final_segmentation = np.zeros(weighted_probabilities.shape[1:], dtype=np.int8)
+    seg = (weighted_probabilities > 0.5).astype(np.int8)
+    final_segmentation[seg[1] == 1] = 2  # ED (Whole Tumor = ED + NCR + ET)
+    final_segmentation[seg[0] == 1] = 1  # NCR (Tumor Core = NCR + ET)
+    final_segmentation[seg[2] == 1] = 4  # ET (Enhancing Tumor)
     
     final_segmentation_map = nib.Nifti1Image(final_segmentation, affine)
     ensemble_save_path = os.path.join(config.output_dir, f"{patient_path[0]}_ensemble_segmentation.nii.gz")
     nib.save(final_segmentation_map, ensemble_save_path)
     print(f"Saved ensemble segmentation for patient {patient_path[0]} at {ensemble_save_path}")
+
+    # Compute ensemble uncertainty
+    epistemic_uncertainty = np.var(ensemble_predictions, axis=0)
+    aleatoric_uncertainty = np.mean(ensemble_uncertainties, axis=0)
+    total_uncertainty = epistemic_uncertainty + aleatoric_uncertainty
+
+    # Create uncertainty map
+    uncertainty_map = np.zeros(seg.shape[1:], dtype=np.float32)
+    uncertainty_map[seg[1] == 1] = total_uncertainty[1][seg[1] == 1]  # ED (Whole Tumor)
+    uncertainty_map[seg[0] == 1] = total_uncertainty[0][seg[0] == 1]  # NCR/NET (Tumor Core)
+    uncertainty_map[seg[2] == 1] = total_uncertainty[2][seg[2] == 1]  # ET (Enhancing Tumor)
+
+    # Save uncertainty map as NIfTI
+    uncertainty_map_img = nib.Nifti1Image(uncertainty_map, affine)
+    uncertainty_save_path = os.path.join(config.output_dir, f"{patient_path[0]}_ensemble_uncertainty_map.nii.gz")
+    nib.save(uncertainty_map_img, uncertainty_save_path)
+    print(f"Saved uncertainty map for patient {patient_path[0]} at {uncertainty_save_path}")
 
     patient_metrics = {"Patient": patient_path[0]}
     for tissue_type in class_labels:
@@ -192,7 +185,7 @@ for idx, batch_data in enumerate(config.test_loader):
             print(f"    Error computing F1 Score for tissue {tissue_type}: {e}")
             sensitivity, specificity, f1_score = np.nan, np.nan, np.nan
         try:
-            composite_score = calculate_composite_score(dice_score, hd95, f1_score, weights)
+            composite_score = calculate_composite_score(dice_score, hd95, f1_score, composite_score_weights)
             print(f"    Composite score for tissue {tissue_type}: {composite_score}")
         except Exception as e:
             print(f"    Error computing Composite Score for tissue {tissue_type}: {e}")
