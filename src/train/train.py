@@ -23,11 +23,17 @@ print("Training, ", filename)
 
 # Loss and accuracy
 loss_func = GeneralizedDiceFocalLoss(
-    include_background=True, to_onehot_y=False, sigmoid=True, w_type="square"
+    include_background=False, # We focus on subregions, not background
+    to_onehot_y=True, # Convert ground truth labels to one-hot encoding
+    sigmoid=False, # Use softmax for multi-class segmentation
+    softmax=True, # Multi-class softmax output
+    w_type="square"
 )
 
 dice_acc = DiceMetric(
-    include_background=True, reduction=MetricReduction.MEAN_BATCH, get_not_nans=True
+    include_background=False, 
+    reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
+    get_not_nans=True
 )
 
 # Optimizer and scheduler
@@ -36,8 +42,9 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     optimizer, T_max=config.max_epochs
 )
 
-post_activation = Activations(sigmoid=True)
-post_pred = AsDiscrete(argmax=False, threshold=0.5)
+# Post-processing transforms
+post_activation = Activations(softmax=True) # Softmax for multi-class output
+post_pred = AsDiscrete(argmax=True) # get the class with the highest prob
 
 # Inference function
 model_inferer = partial(
@@ -68,14 +75,14 @@ def trainer(
     scheduler,
     model_inferer=None,
     start_epoch=0,
-    post_sigmoid=None,
+    post_activation=None,
     post_pred=None,
     early_stopper=None,
 ):
     val_acc_max = 0.0
     val_loss_min = float("inf")
-    dices_tc = []
-    dices_wt = []
+    dices_ncr = []
+    dices_ed = []
     dices_et = []
     dices_avg = []
     loss_epochs = []
@@ -107,27 +114,27 @@ def trainer(
                 acc_func=acc_func,
                 loss_func=loss_func,
                 model_inferer=model_inferer,
-                post_sigmoid=post_sigmoid,
+                post_activation=post_activation,
                 post_pred=post_pred,
             )
-            dice_tc = val_acc[0]
-            dice_wt = val_acc[1]
+            dice_ncr = val_acc[0]
+            dice_ed = val_acc[1]
             dice_et = val_acc[2]
             val_avg_acc = np.mean(val_acc)
             print(
                 "Final validation stats {}/{}".format(epoch, config.max_epochs - 1),
-                ", dice_tc:",
-                dice_tc,
-                ", dice_wt:",
-                dice_wt,
+                ", dice_ncr:",
+                dice_ncr,
+                ", dice_ed:",
+                dice_ed,
                 ", dice_et:",
                 dice_et,
                 ", Dice_Avg:",
                 val_avg_acc,
                 ", time {:.2f}s".format(time.time() - epoch_time),
             )
-            dices_tc.append(dice_tc)
-            dices_wt.append(dice_wt)
+            dices_ncr.append(dice_ncr)
+            dices_ed.append(dice_ed)
             dices_et.append(dice_et)
             dices_avg.append(val_avg_acc)
 
@@ -153,8 +160,8 @@ def trainer(
     print("Training Finished !, Best Accuracy: ", val_acc_max)
     return (
         val_acc_max,
-        dices_tc,
-        dices_wt,
+        dices_ncr,
+        dices_ed,
         dices_et,
         dices_avg,
         loss_epochs,
@@ -165,7 +172,7 @@ def trainer(
 # Start training
 start_epoch = 0
 
-val_acc_max, dices_tc, dices_wt, dices_et, dices_avg, loss_epochs, trains_epoch = (
+val_acc_max, dices_ncr, dices_ed, dices_et, dices_avg, loss_epochs, trains_epoch = (
     trainer(
         model=model,
         train_loader=config.train_loader,
@@ -176,7 +183,7 @@ val_acc_max, dices_tc, dices_wt, dices_et, dices_avg, loss_epochs, trains_epoch 
         scheduler=scheduler,
         model_inferer=model_inferer,
         start_epoch=start_epoch,
-        post_sigmoid=post_activation,
+        post_activation=post_activation,
         post_pred=post_pred,
     )
 )

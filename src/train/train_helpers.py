@@ -10,7 +10,6 @@ from torch.utils.tensorboard import SummaryWriter
 scaler = GradScaler()
 log_dir = "./outputs/runs/experiment_1"
 os.makedirs(log_dir, exist_ok=True)
-writer = SummaryWriter(log_dir=log_dir)
 
 def train_epoch(model, loader, optimizer, epoch, loss_func):
     model.train()
@@ -42,15 +41,9 @@ def train_epoch(model, loader, optimizer, epoch, loss_func):
             f"time {time.time() - start_time:.2f}s",
         )
 
-        # Log metrics to TensorBoard
-        writer.add_scalar("Loss/train", run_loss.avg, epoch * len(loader) + idx)
-
         start_time = time.time()
 
     torch.cuda.empty_cache()
-
-    # Log final averages for the epoch
-    writer.add_scalar("Loss_epoch/train", run_loss.avg, epoch)
 
     return run_loss.avg
 
@@ -62,7 +55,7 @@ def val_epoch(
     acc_func,
     loss_func,
     model_inferer=None,
-    post_sigmoid=None,
+    post_activation=None,
     post_pred=None,
 ):
     model.eval()
@@ -85,7 +78,7 @@ def val_epoch(
             val_labels_list = decollate_batch(target)
             val_outputs_list = decollate_batch(logits)
             val_output_convert = [
-                post_pred(post_sigmoid(val_pred_tensor))
+                post_pred(post_activation(val_pred_tensor))
                 for val_pred_tensor in val_outputs_list
             ]
             acc_func.reset()
@@ -94,26 +87,20 @@ def val_epoch(
             run_acc.update(acc.cpu().numpy(), n=not_nans.cpu().numpy())
 
             # Get Dice per subregion
-            dice_tc = run_acc.avg[0]
-            dice_wt = run_acc.avg[1]
+            dice_ncr = run_acc.avg[0]
+            dice_ed = run_acc.avg[1]
             dice_et = run_acc.avg[2]
             print(
                 "Val {}/{} {}/{}".format(epoch, config.max_epochs, idx, len(loader)),
-                ", dice_tc:",
-                dice_tc,
-                ", dice_wt:",
-                dice_wt,
+                ", dice_ncr:",
+                dice_ncr,
+                ", dice_ed:",
+                dice_ed,
                 ", dice_et:",
                 dice_et,
                 ", loss: {:.4f}".format(run_loss.avg),
                 ", time {:.2f}s".format(time.time() - start_time),
             )
             start_time = time.time()
-
-    # Log final averaged metrics to TensorBoard
-    writer.add_scalar("Loss_epoch/val", run_loss.avg, epoch)
-    writer.add_scalar("Dice_tc/val", dice_tc, epoch)
-    writer.add_scalar("Dice_wt/val", dice_wt, epoch)
-    writer.add_scalar("Dice_et/val", dice_et, epoch)
 
     return run_acc.avg, run_loss.avg
