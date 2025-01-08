@@ -16,53 +16,53 @@ from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
 
 # Initialize the model
-model = models.vnet_model
-filename = models.get_model_name(models.models_dict, model)
+# model = models.vnet_model
+# filename = models.get_model_name(models.models_dict, model)
 
-print("Training, ", filename)
+# print("Training, ", filename)
 
 # Loss and accuracy
-loss_func = GeneralizedDiceFocalLoss(
-    include_background=False, # We focus on subregions, not background
-    to_onehot_y=True, # Convert ground truth labels to one-hot encoding
-    sigmoid=False, # Use softmax for multi-class segmentation
-    softmax=True, # Multi-class softmax output
-    w_type="square"
-)
+# loss_func = GeneralizedDiceFocalLoss(
+#     include_background=False, # We focus on subregions, not background
+#     to_onehot_y=True, # Convert ground truth labels to one-hot encoding
+#     sigmoid=False, # Use softmax for multi-class segmentation
+#     softmax=True, # Multi-class softmax output
+#     w_type="square"
+# )
 
-dice_acc = DiceMetric(
-    include_background=False, 
-    reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
-    get_not_nans=True
-)
+# dice_acc = DiceMetric(
+#     include_background=False, 
+#     reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
+#     get_not_nans=True
+# )
 
-# Optimizer and scheduler
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=config.max_epochs
-)
+# # Optimizer and scheduler
+# optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+# scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+#     optimizer, T_max=config.max_epochs
+# )
 
-# Post-processing transforms
-post_activation = Activations(softmax=True) # Softmax for multi-class output
-post_pred = AsDiscrete(argmax=True) # get the class with the highest prob
+# # Post-processing transforms
+# post_activation = Activations(softmax=True) # Softmax for multi-class output
+# post_pred = AsDiscrete(argmax=True) # get the class with the highest prob
 
-# Inference function
-model_inferer = partial(
-    sliding_window_inference,
-    roi_size=config.roi,
-    sw_batch_size=config.sw_batch_size,
-    predictor=model,
-    overlap=config.infer_overlap,
-)
+# # Inference function
+# model_inferer = partial(
+#     sliding_window_inference,
+#     roi_size=config.roi,
+#     sw_batch_size=config.sw_batch_size,
+#     predictor=model,
+#     overlap=config.infer_overlap,
+# )
 
-# Early stopping mechanism
-early_stopper = EarlyStopping(
-    patience=20,
-    delta=0.001,
-    verbose=True,
-    save_checkpoint_fn=save_checkpoint,
-    filename=models.get_model_name(models.models_dict, model),
-)
+# # Early stopping mechanism
+# early_stopper = EarlyStopping(
+#     patience=20,
+#     delta=0.001,
+#     verbose=True,
+#     save_checkpoint_fn=save_checkpoint,
+#     filename=models.get_model_name(models.models_dict, model),
+# )
 
 # Main trainer function
 def trainer(
@@ -170,20 +170,20 @@ def trainer(
 
 
 # Start training
-start_epoch = 0
+# start_epoch = 0
 
-val_acc_max, dices_ncr, dices_ed, dices_et, dices_avg, loss_epochs, trains_epoch = (
-    trainer(
-        model=model,
-        train_loader=config.train_loader,
-        val_loader=config.val_loader,
-        optimizer=optimizer,
-        loss_func=loss_func,
-        acc_func=dice_acc,
-        scheduler=scheduler,
-        model_inferer=model_inferer,
-        start_epoch=start_epoch,
-        post_activation=post_activation,
-        post_pred=post_pred,
-    )
-)
+# val_acc_max, dices_ncr, dices_ed, dices_et, dices_avg, loss_epochs, trains_epoch = (
+#     trainer(
+#         model=model,
+#         train_loader=config.train_loader,
+#         val_loader=config.val_loader,
+#         optimizer=optimizer,
+#         loss_func=loss_func,
+#         acc_func=dice_acc,
+#         scheduler=scheduler,
+#         model_inferer=model_inferer,
+#         start_epoch=start_epoch,
+#         post_activation=post_activation,
+#         post_pred=post_pred,
+#     )
+# )
