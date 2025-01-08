@@ -15,17 +15,12 @@ from monai.utils.enums import MetricReduction
 from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
 from train import trainer
-
-# Initialize the model
-model = models.vnet_model
-filename = models.get_model_name(models.models_dict, model)
-
-print("Training, ", filename)
+import json 
 
 # Loss and accuracy
 loss_func = GeneralizedDiceFocalLoss(
     include_background=False, # We focus on subregions, not background
-    to_onehot_y=True, # Convert ground truth labels to one-hot encoding
+    to_onehot_y=False, # One-hot encoded in the transformations
     sigmoid=False, # Use softmax for multi-class segmentation
     softmax=True, # Multi-class softmax output
     w_type="square"
@@ -38,35 +33,15 @@ dice_acc = DiceMetric(
 )
 
 # Optimizer and scheduler
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=config.max_epochs
-)
+def optimizer_func(params):
+    return torch.optim.AdamW(params, lr=1e-4, weight_decay=1e-5)
+
+def scheduler_func(optimizer):
+    return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.max_epochs)
 
 # Post-processing transforms
 post_activation = Activations(softmax=True) # Softmax for multi-class output
 post_pred = AsDiscrete(argmax=True) # get the class with the highest prob
-
-# Inference function
-model_inferer = partial(
-    sliding_window_inference,
-    roi_size=config.roi,
-    sw_batch_size=config.sw_batch_size,
-    predictor=model,
-    overlap=config.infer_overlap,
-)
-
-# Early stopping mechanism
-early_stopper = EarlyStopping(
-    patience=20,
-    delta=0.001,
-    verbose=True,
-    save_checkpoint_fn=save_checkpoint,
-    filename=models.get_model_name(models.models_dict, model),
-)
-
-# Start training
-start_epoch = 0
 
 def cross_validate_trainer(
     model_class,  # Pass the model class so that a new instance is created for each fold
@@ -75,11 +50,11 @@ def cross_validate_trainer(
     loss_func,
     acc_func,
     scheduler_func,
-    model_inferer=None,
     num_folds=5,
     post_activation=None,
     post_pred=None,
-    early_stopper=None,
+    early_stopper_patience=10,
+    early_stopper_delta=0.0001
 ):
     fold_results = []  # To store performance metrics for each fold
 
@@ -88,9 +63,24 @@ def cross_validate_trainer(
         
         # Create a new model for each fold
         model = model_class().to(config.device)
-        
         optimizer = optimizer_func(model.parameters())  
         scheduler = scheduler_func(optimizer) 
+
+        model_inferer = partial(
+            sliding_window_inference,
+            roi_size=config.roi,
+            sw_batch_size=config.sw_batch_size,
+            predictor=model,  
+            overlap=config.infer_overlap,
+        )
+
+        early_stopper = EarlyStopping(
+            patience=early_stopper_patience,
+            delta=early_stopper_delta,
+            verbose=True,
+            save_checkpoint_fn=save_checkpoint,
+            filename=f"best_model_fold_{fold + 1}.pt",
+        )
 
         # Run the trainer for this fold
         val_acc_max, dices_ncr, dices_ed, dices_et, dices_avg, loss_epochs, trains_epoch = trainer(
@@ -134,16 +124,17 @@ def cross_validate_trainer(
 
 # Perform Cross-Validation
 fold_results = cross_validate_trainer(
-    model_class=model_class,
+    model_class=lambda: models.models_dict[f"{config.model_name}_model.pt"],
     fold_loaders=config.fold_loaders, 
     optimizer_func=optimizer_func,
     loss_func=loss_func,
     acc_func=dice_acc,
     scheduler_func=scheduler_func,
-    model_inferer=model_inferer,
     num_folds=5,
     post_activation=post_activation,
     post_pred=post_pred,
+    early_stopper_patience=10,
+    early_stopper_delta=0.0001
 )
 
 with open("cv_results.json", "w") as f:
