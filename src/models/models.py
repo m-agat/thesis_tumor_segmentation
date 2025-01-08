@@ -6,9 +6,9 @@ swinunetr_model = SwinUNETR(
     in_channels=4,
     out_channels=3,  
     feature_size=48,
-    drop_rate=0.1,
-    attn_drop_rate=0.1,
-    dropout_path_rate=0.1,
+    drop_rate=0.2,
+    attn_drop_rate=0.2,
+    dropout_path_rate=0.15,
     use_checkpoint=True,
 ).to(config.device)
 
@@ -27,7 +27,7 @@ attunet_model = AttentionUnet(
     out_channels=3,  
     channels=(32, 64, 128, 256, 512),
     strides=(2, 2, 2, 1),
-    dropout=0.1
+    dropout=0.2
 ).to(config.device)
 
 vnet_model = VNet(
