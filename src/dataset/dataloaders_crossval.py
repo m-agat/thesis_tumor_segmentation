@@ -7,7 +7,9 @@ from dataset.transforms import (
 )
 from monai.apps import CrossValidation
 from monai.data import DataLoader, Dataset
-
+from abc import ABC, abstractmethod
+from monai.data import CacheDataset
+import sys
 
 def read_data_from_folders(train_folder):
     """
@@ -35,12 +37,33 @@ def read_data_from_folders(train_folder):
     all_files = load_cases_from_folder(train_folder)
     return all_files
 
+class CVDataset(ABC, Dataset):
+    """
+    Base class to generate cross validation datasets.
+
+    """
+
+    def __init__(
+        self,
+        data,
+        transform,
+    ) -> None:
+        data = self._split_datalist(datalist=data)
+        Dataset.__init__(
+            self, data, transform
+        )
+
+    @abstractmethod
+    def _split_datalist(self, datalist):
+        raise NotImplementedError(f"Subclass {self.__class__.__name__} must implement this method.")
+    
+
 def create_cross_validation_datasets(data_list, num_folds, train_transform, val_transform):
     """
     Create datasets for cross-validation using MONAI's CrossValidation class.
     """
     cvdataset = CrossValidation(
-        dataset_cls=Dataset,  
+        dataset_cls=CVDataset,  
         data=data_list,
         nfolds=num_folds,
         seed=42,  
