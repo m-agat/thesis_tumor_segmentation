@@ -8,10 +8,12 @@ def get_train_transforms(roi):
     train_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
+            transforms.MapLabelValued(keys="label", orig_labels=[1, 2, 4], target_labels=[1, 2, 3]),
+            transforms.EnsureChannelFirstd(keys=["label"]),
+            transforms.AsDiscreted(keys="label", to_onehot=4),
             transforms.RandSpatialCropd(
                 keys=["image", "label"],
                 roi_size=[roi[0], roi[1], roi[2]],
@@ -34,10 +36,12 @@ def get_val_transforms():
     val_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
+            transforms.MapLabelValued(keys="label", orig_labels=[1, 2, 4], target_labels=[1, 2, 3]),
+            transforms.EnsureChannelFirstd(keys=["label"]), 
+            transforms.AsDiscreted(keys="label", to_onehot=4),
         ]
     )
     return val_transform
@@ -50,10 +54,10 @@ def get_test_transforms():
     test_transform = transforms.Compose(
         [
             transforms.LoadImaged(keys=["image", "label"]),
-            transforms.ConvertToMultiChannelBasedOnBratsClassesd(keys="label"),
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
+            transforms.MapLabelValued(keys="label", orig_labels=[1, 2, 4], target_labels=[1, 2, 3])
         ]
     )
     return test_transform

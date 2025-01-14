@@ -4,11 +4,11 @@ import config.config as config
 swinunetr_model = SwinUNETR(
     img_size=config.roi,
     in_channels=4,
-    out_channels=3,  
+    out_channels=4,  
     feature_size=48,
-    drop_rate=0.1,
-    attn_drop_rate=0.1,
-    dropout_path_rate=0.1,
+    drop_rate=0.2,
+    attn_drop_rate=0.2,
+    dropout_path_rate=0.15,
     use_checkpoint=True,
 ).to(config.device)
 
@@ -17,23 +17,23 @@ segresnet_model = SegResNet(
     blocks_up=[1, 1, 1],
     init_filters=16,
     in_channels=4,
-    out_channels=3,  
+    out_channels=4,  
     dropout_prob=0.2,
 ).to(config.device)
 
 attunet_model = AttentionUnet(
     spatial_dims=3,
     in_channels=4,
-    out_channels=3,  
+    out_channels=4,  
     channels=(32, 64, 128, 256, 512),
     strides=(2, 2, 2, 1),
-    dropout=0.1
+    dropout=0.2
 ).to(config.device)
 
 vnet_model = VNet(
     spatial_dims=3,
     in_channels=4,
-    out_channels=3,  
+    out_channels=4,  
     dropout_prob_down=0.3,
     dropout_prob_up=(0.3, 0.2),
     dropout_dim=3,

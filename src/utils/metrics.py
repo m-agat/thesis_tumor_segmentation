@@ -1,27 +1,21 @@
-import numpy as np 
-import scipy.spatial.distance as distance
+import numpy as np
+import torch
 from monai.metrics import compute_hausdorff_distance
-import torch 
+
 
 def compute_dice_score_per_tissue(prediction, ground_truth, tissue_label):
     """
-    Compute the Dice score for a specific tissue type with multi-channel ground truth.
+    Compute the Dice score for a specific tissue type with single-channel prediction and ground truth.
     Args:
-        prediction (numpy.ndarray): The predicted segmentation (single-channel).
-        ground_truth (numpy.ndarray): The ground truth segmentation (multi-channel).
+        prediction (numpy.ndarray): The predicted segmentation (shape: (240, 240, 155)).
+        ground_truth (numpy.ndarray): The ground truth segmentation (shape: (240, 240, 155)).
         tissue_label (int): The class label of the tissue type (e.g., 1 for NCR, 2 for ED, 4 for ET).
     
     Returns:
         float: Dice score for the specified tissue type.
     """
-    # Map class label to ground truth channel index
-    label_to_channel = {1: 0, 2: 1, 4: 2}
-    if tissue_label not in label_to_channel:
-        raise ValueError(f"Invalid tissue label: {tissue_label}")
-    tissue_index = label_to_channel[tissue_label]
-    
-    # Extract the ground truth channel for the tissue type
-    gt_tissue = ground_truth[tissue_index].astype(np.float32)
+    # Extract binary masks for the given tissue label
+    gt_tissue = (ground_truth == tissue_label).astype(np.float32)
     pred_tissue = (prediction == tissue_label).astype(np.float32)
     
     intersection = np.sum(pred_tissue * gt_tissue)
@@ -35,23 +29,22 @@ def compute_dice_score_per_tissue(prediction, ground_truth, tissue_label):
 
 def compute_hd95(prediction, ground_truth, tissue_label):
     """
-    Compute the 95th percentile Hausdorff Distance for a specific tissue type with multi-channel ground truth.
+    Compute the 95th percentile Hausdorff Distance for a specific tissue type.
+    Args:
+        prediction (numpy.ndarray): The predicted segmentation (shape: (240, 240, 155)).
+        ground_truth (numpy.ndarray): The ground truth segmentation (shape: (240, 240, 155)).
+        tissue_label (int): The class label of the tissue type (e.g., 1 for NCR, 2 for ED, 4 for ET).
+    
+    Returns:
+        float: The 95th percentile Hausdorff Distance for the specified tissue type.
     """
-    # Map class label to ground truth channel index
-    label_to_channel = {1: 0, 2: 1, 4: 2}
-    if tissue_label not in label_to_channel:
-        raise ValueError(f"Invalid tissue label: {tissue_label}")
-    tissue_index = label_to_channel[tissue_label]
-
-    # Extract the ground truth channel for the tissue type
-    gt_tissue = ground_truth[tissue_index].astype(np.float32)
+    # Extract binary masks for the given tissue label
+    gt_tissue = (ground_truth == tissue_label).astype(np.float32)
     pred_tissue = (prediction == tissue_label).astype(np.float32)
     
     # Add batch and channel dimensions
-    if pred_tissue.ndim == 3:
-        pred_tissue = pred_tissue[None, None, ...]
-    if gt_tissue.ndim == 3:
-        gt_tissue = gt_tissue[None, None, ...]
+    pred_tissue = pred_tissue[None, None, ...]
+    gt_tissue = gt_tissue[None, None, ...]
     
     # Convert to PyTorch tensors
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,22 +66,22 @@ def compute_hd95(prediction, ground_truth, tissue_label):
 def compute_metrics_with_monai(prediction, ground_truth, tissue_label, confusion_metric):
     """
     Compute sensitivity, specificity, and F1 score using MONAI's ConfusionMatrixMetric.
+    Args:
+        prediction (numpy.ndarray): The predicted segmentation (shape: (240, 240, 155)).
+        ground_truth (numpy.ndarray): The ground truth segmentation (shape: (240, 240, 155)).
+        tissue_label (int): The class label of the tissue type (e.g., 1 for NCR, 2 for ED, 4 for ET).
+        confusion_metric: An instance of MONAI's ConfusionMatrixMetric.
+    
+    Returns:
+        Tuple[float, float, float]: Sensitivity, specificity, and F1 score for the specified tissue type.
     """
-    # Map class label to ground truth channel index
-    label_to_channel = {1: 0, 2: 1, 4: 2}
-    if tissue_label not in label_to_channel:
-        raise ValueError(f"Invalid tissue label: {tissue_label}")
-    tissue_index = label_to_channel[tissue_label]
-
-    # Extract the ground truth channel for the tissue type
-    gt_tissue = ground_truth[tissue_index].astype(np.float32)
+    # Extract binary masks for the given tissue label
+    gt_tissue = (ground_truth == tissue_label).astype(np.float32)
     pred_tissue = (prediction == tissue_label).astype(np.float32)
     
     # Add batch and channel dimensions
-    if pred_tissue.ndim == 3:
-        pred_tissue = pred_tissue[None, None, ...]
-    if gt_tissue.ndim == 3:
-        gt_tissue = gt_tissue[None, None, ...]
+    pred_tissue = pred_tissue[None, None, ...]
+    gt_tissue = gt_tissue[None, None, ...]
     
     # Convert to PyTorch tensors
     pred_tissue = torch.from_numpy(pred_tissue)
@@ -103,6 +96,17 @@ def compute_metrics_with_monai(prediction, ground_truth, tissue_label, confusion
 
 
 def calculate_composite_score(dice, hd95, f1_score, weights):
+    """
+    Calculate a composite score by combining Dice, HD95, and F1 scores.
+    Args:
+        dice (float): Dice score.
+        hd95 (float): 95th percentile Hausdorff Distance.
+        f1_score (float): F1 score.
+        weights (dict): Weights for Dice, HD95, and F1 scores (keys: "Dice", "HD95", "F1").
+    
+    Returns:
+        float: Composite score.
+    """
     # Handle HD95 if it's NaN or infinite
     if np.isnan(hd95) or np.isinf(hd95):
         hd95_score = 0  # Default to 0 if HD95 is not computable
