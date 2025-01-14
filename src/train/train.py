@@ -78,6 +78,7 @@ def trainer(
     post_activation=None,
     post_pred=None,
     early_stopper=None,
+    fold=0,
 ):
     val_acc_max = 0.0
     val_loss_min = float("inf")
@@ -141,18 +142,18 @@ def trainer(
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
-                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=filename)
+                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"model_best_acc_fold_{fold + 1}.pt")
 
             if val_loss < val_loss_min:
                 print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
                 val_loss_min = val_loss
-                save_checkpoint(model, epoch, best_acc=val_loss_min, filename="vnet_model_bestloss.pt")
+                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"model_bestloss_fold_{fold + 1}.pt")
 
             scheduler.step()
 
             # Check for early stopping
             if early_stopper is not None:
-                early_stopper(val_avg_acc, model)
+                early_stopper(val_avg_acc, model, epoch, val_acc_max)
                 if early_stopper.early_stop:
                     print("Early stopping triggered. Stopping training.")
                     break
