@@ -12,6 +12,7 @@ sys.path.append("../")
 import dataset.dataloaders as dataloaders
 import dataset.dataloaders_crossval as dataloaders_cv
 import dataset.transforms as transforms 
+import numpy as np
 
 # ---------------------------------
 # 1. Configuration File Loaders
@@ -106,7 +107,7 @@ model_paths = {
 }
 
 # Output directory
-output_dir = args.output_path
+output_dir = os.path.join(args.output_path, f"{model_name}")
 os.makedirs(output_dir, exist_ok=True)
 
 # ---------------------------------
@@ -162,6 +163,23 @@ train_datasets, val_datasets = dataloaders_cv.create_cross_validation_datasets(
     data_list=all_files, num_folds=num_folds, train_transform=transforms.get_train_transforms(roi),
     val_transform=transforms.get_val_transforms()
 )
+
+def get_subset(dataset, fraction, seed):
+    np.random.seed(seed)
+    subset_size = int(len(dataset) * fraction)
+    indices = np.random.choice(len(dataset), subset_size, replace=False)  # Random subset
+    return Subset(dataset, indices)
+
+subset_fraction = 0.05  # Use 10% of the data for speed-up
+subset_seed = 42 
+
+# Get subset datasets
+subset_train_datasets = [get_subset(ds, subset_fraction, subset_seed) for ds in train_datasets]
+subset_val_datasets = [get_subset(ds, subset_fraction, subset_seed) for ds in val_datasets]
+
+# Get data loaders for subset datasets
+subset_fold_loaders = dataloaders_cv.get_data_loaders_for_folds(subset_train_datasets, subset_val_datasets, batch_size)
+
 fold_loaders = dataloaders_cv.get_data_loaders_for_folds(train_datasets, val_datasets, batch_size)
 
 print("Cross-validation data loaders loaded.")
