@@ -29,7 +29,7 @@ loss_func = GeneralizedDiceFocalLoss(
 dice_acc = DiceMetric(
     include_background=False, 
     reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
-    get_not_nans=True
+    get_not_nans=True,
 )
 
 # Optimizer and scheduler
@@ -41,7 +41,7 @@ def scheduler_func(optimizer):
 
 # Post-processing transforms
 post_activation = Activations(softmax=True) # Softmax for multi-class output
-post_pred = AsDiscrete(argmax=True) # get the class with the highest prob
+post_pred = AsDiscrete(argmax=True, to_onehot=4) # get the class with the highest prob for each channel
 
 def cross_validate_trainer(
     model_class,  # Pass the model class so that a new instance is created for each fold
@@ -53,8 +53,6 @@ def cross_validate_trainer(
     num_folds=5,
     post_activation=None,
     post_pred=None,
-    early_stopper_patience=10,
-    early_stopper_delta=0.0001
 ):
     fold_results = []  # To store performance metrics for each fold
 
@@ -75,8 +73,8 @@ def cross_validate_trainer(
         )
 
         early_stopper = EarlyStopping(
-            patience=early_stopper_patience,
-            delta=early_stopper_delta,
+            patience=5,
+            delta=0.001,
             verbose=True,
             save_checkpoint_fn=save_checkpoint,
             filename=f"best_model_fold_{fold + 1}.pt",
@@ -96,6 +94,7 @@ def cross_validate_trainer(
             post_activation=post_activation,
             post_pred=post_pred,
             early_stopper=early_stopper,
+            fold=fold,
         )
 
         print(f"Finished Fold {fold + 1}, Best Dice Avg: {val_acc_max:.4f}")
@@ -121,20 +120,17 @@ def cross_validate_trainer(
 
     return fold_results
 
-
 # Perform Cross-Validation
 fold_results = cross_validate_trainer(
     model_class=lambda: models.models_dict[f"{config.model_name}_model.pt"],
-    fold_loaders=config.fold_loaders, 
+    fold_loaders=config.subset_fold_loaders, 
     optimizer_func=optimizer_func,
     loss_func=loss_func,
     acc_func=dice_acc,
     scheduler_func=scheduler_func,
     num_folds=5,
     post_activation=post_activation,
-    post_pred=post_pred,
-    early_stopper_patience=10,
-    early_stopper_delta=0.0001
+    post_pred=post_pred
 )
 
 with open("cv_results.json", "w") as f:
