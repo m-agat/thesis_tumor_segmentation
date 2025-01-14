@@ -149,74 +149,92 @@ for idx, batch_data in enumerate(config.test_loader):
     uncertainty_map[seg[2] == 1] = total_uncertainty[2][seg[2] == 1]  # ET (Enhancing Tumor)
 
     # Save uncertainty map as NIfTI
-    uncertainty_map_img = nib.Nifti1Image(uncertainty_map, affine)
-    uncertainty_save_path = os.path.join(config.output_dir, f"{patient_path[0]}_ensemble_uncertainty_map.nii.gz")
-    nib.save(uncertainty_map_img, uncertainty_save_path)
-    print(f"Saved uncertainty map for patient {patient_path[0]} at {uncertainty_save_path}")
+    # Create separate uncertainty maps for each tissue type
+    uncertainty_map_ncr = np.zeros(seg.shape[1:], dtype=np.float32)  # NCR
+    uncertainty_map_et = np.zeros(seg.shape[1:], dtype=np.float32)   # ET
+    uncertainty_map_ed = np.zeros(seg.shape[1:], dtype=np.float32)   # ED
 
-    patient_metrics = {"Patient": patient_path[0]}
-    for tissue_type in class_labels:
-        print(f"  Computing metrics for tissue type {tissue_type}")
-        # Compute and store metrics
-        try:
-            dice_score = compute_dice_score_per_tissue(final_segmentation, ground_truth, tissue_type)
-            print(f"    Dice score for tissue {tissue_type}: {dice_score}")
-        except Exception as e:
-            print(f"    Error computing Dice for tissue {tissue_type}: {e}")
-            dice_score = np.nan
-        try:
-            hd95 = compute_hd95(final_segmentation, ground_truth, tissue_type)
-            if np.isnan(hd95):
-                print(f"    HD95 for tissue {tissue_type} not computable, setting to 0")
-                hd95 = float('inf')
-            print(f"    HD95 for tissue {tissue_type}: {hd95}")
-        except Exception as e:
-            print(f"    Error computing HD95 for tissue {tissue_type}: {e}")
-            hd95 = np.nan
-        try:
-            sensitivity, specificity, f1_score = compute_metrics_with_monai(final_segmentation, ground_truth, tissue_type, confusion_metric)
-            print(f"    Sensitivity for tissue {tissue_type}: {sensitivity}")
-            print(f"    Specificity for tissue {tissue_type}: {specificity}")
-            print(f"    F1 score for tissue {tissue_type}: {f1_score}")
-            if np.isnan(sensitivity) or np.isnan(f1_score):
-                print(f"    Sensitivity or F1 for tissue {tissue_type} is not computable, setting to 0")
-                sensitivity, f1_score = 0.0, 0.0
-        except Exception as e:
-            print(f"    Error computing F1 Score for tissue {tissue_type}: {e}")
-            sensitivity, specificity, f1_score = np.nan, np.nan, np.nan
-        try:
-            composite_score = calculate_composite_score(dice_score, hd95, f1_score, composite_score_weights)
-            print(f"    Composite score for tissue {tissue_type}: {composite_score}")
-        except Exception as e:
-            print(f"    Error computing Composite Score for tissue {tissue_type}: {e}")
-            composite_score = np.nan
+    uncertainty_map_ncr[seg[0] == 1] = total_uncertainty[0][seg[0] == 1]  # NCR (Tumor Core)
+    uncertainty_map_ed[seg[1] == 1] = total_uncertainty[1][seg[1] == 1]   # ED (Whole Tumor)
+    uncertainty_map_et[seg[2] == 1] = total_uncertainty[2][seg[2] == 1]   # ET (Enhancing Tumor)
 
-        patient_metrics.update({
-            f"Dice_{tissue_type}": dice_score,
-            f"HD95_{tissue_type}": hd95,
-            f"Sensitivity_{tissue_type}": sensitivity,
-            f"Specificity_{tissue_type}": specificity,
-            f"F1_{tissue_type}": f1_score,
-            f"Composite_Score_{tissue_type}": composite_score,
-        })
+    # Save individual uncertainty maps as NIfTI files
+    uncertainty_save_path_ncr = os.path.join(config.output_dir, f"{patient_path[0]}_uncertainty_map_NCR.nii.gz")
+    uncertainty_save_path_et = os.path.join(config.output_dir, f"{patient_path[0]}_uncertainty_map_ET.nii.gz")
+    uncertainty_save_path_ed = os.path.join(config.output_dir, f"{patient_path[0]}_uncertainty_map_ED.nii.gz")
 
-    patient_scores.append(patient_metrics)
-    print(f"Metrics for patient {patient_path[0]}: {patient_metrics}")
+    nib.save(nib.Nifti1Image(uncertainty_map_ncr, affine), uncertainty_save_path_ncr)
+    nib.save(nib.Nifti1Image(uncertainty_map_et, affine), uncertainty_save_path_et)
+    nib.save(nib.Nifti1Image(uncertainty_map_ed, affine), uncertainty_save_path_ed)
 
-    if idx % save_interval == 0:
-        print(f"Saving intermediate results at patient index {idx}")
-        pd.DataFrame(patient_scores).to_csv(
-            results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
-        )
-        print(f"Saved intermediate results to {results_save_path}")
-        patient_scores.clear()
+    print(f"Saved uncertainty maps for patient {patient_path[0]} at:")
+    print(f" - NCR: {uncertainty_save_path_ncr}")
+    print(f" - ET: {uncertainty_save_path_et}")
+    print(f" - ED: {uncertainty_save_path_ed}")
+
+    # patient_metrics = {"Patient": patient_path[0]}
+    # for tissue_type in class_labels:
+    #     print(f"  Computing metrics for tissue type {tissue_type}")
+    #     # Compute and store metrics
+    #     try:
+    #         dice_score = compute_dice_score_per_tissue(final_segmentation, ground_truth, tissue_type)
+    #         print(f"    Dice score for tissue {tissue_type}: {dice_score}")
+    #     except Exception as e:
+    #         print(f"    Error computing Dice for tissue {tissue_type}: {e}")
+    #         dice_score = np.nan
+    #     try:
+    #         hd95 = compute_hd95(final_segmentation, ground_truth, tissue_type)
+    #         if np.isnan(hd95):
+    #             print(f"    HD95 for tissue {tissue_type} not computable, setting to 0")
+    #             hd95 = float('inf')
+    #         print(f"    HD95 for tissue {tissue_type}: {hd95}")
+    #     except Exception as e:
+    #         print(f"    Error computing HD95 for tissue {tissue_type}: {e}")
+    #         hd95 = np.nan
+    #     try:
+    #         sensitivity, specificity, f1_score = compute_metrics_with_monai(final_segmentation, ground_truth, tissue_type, confusion_metric)
+    #         print(f"    Sensitivity for tissue {tissue_type}: {sensitivity}")
+    #         print(f"    Specificity for tissue {tissue_type}: {specificity}")
+    #         print(f"    F1 score for tissue {tissue_type}: {f1_score}")
+    #         if np.isnan(sensitivity) or np.isnan(f1_score):
+    #             print(f"    Sensitivity or F1 for tissue {tissue_type} is not computable, setting to 0")
+    #             sensitivity, f1_score = 0.0, 0.0
+    #     except Exception as e:
+    #         print(f"    Error computing F1 Score for tissue {tissue_type}: {e}")
+    #         sensitivity, specificity, f1_score = np.nan, np.nan, np.nan
+    #     try:
+    #         composite_score = calculate_composite_score(dice_score, hd95, f1_score, composite_score_weights)
+    #         print(f"    Composite score for tissue {tissue_type}: {composite_score}")
+    #     except Exception as e:
+    #         print(f"    Error computing Composite Score for tissue {tissue_type}: {e}")
+    #         composite_score = np.nan
+
+    #     patient_metrics.update({
+    #         f"Dice_{tissue_type}": dice_score,
+    #         f"HD95_{tissue_type}": hd95,
+    #         f"Sensitivity_{tissue_type}": sensitivity,
+    #         f"Specificity_{tissue_type}": specificity,
+    #         f"F1_{tissue_type}": f1_score,
+    #         f"Composite_Score_{tissue_type}": composite_score,
+    #     })
+
+    # patient_scores.append(patient_metrics)
+    # print(f"Metrics for patient {patient_path[0]}: {patient_metrics}")
+
+    # if idx % save_interval == 0:
+    #     print(f"Saving intermediate results at patient index {idx}")
+    #     pd.DataFrame(patient_scores).to_csv(
+    #         results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
+    #     )
+    #     print(f"Saved intermediate results to {results_save_path}")
+    #     patient_scores.clear()
 
 
-if patient_scores:
-    pd.DataFrame(patient_scores).to_csv(
-        results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
-    )
-    print(f"Saved final results to {results_save_path}")
+# if patient_scores:
+#     pd.DataFrame(patient_scores).to_csv(
+#         results_save_path, index=False, mode='a', header=not os.path.exists(results_save_path)
+#     )
+#     print(f"Saved final results to {results_save_path}")
 
 print("Processing complete. All metrics saved.")
 
