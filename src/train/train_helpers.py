@@ -5,13 +5,10 @@ from utils.utils import AverageMeter
 from monai.data import decollate_batch
 import config.config as config
 from torch.cuda.amp import autocast, GradScaler
-from torch.utils.tensorboard import SummaryWriter
 
 scaler = GradScaler()
-log_dir = "./outputs/runs/experiment_1"
-os.makedirs(log_dir, exist_ok=True)
 
-def train_epoch(model, loader, optimizer, epoch, loss_func):
+def train_epoch(model, loader, optimizer, epoch, loss_func, writer=None, fold=0):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -35,6 +32,10 @@ def train_epoch(model, loader, optimizer, epoch, loss_func):
 
         run_loss.update(loss.item(), n=config.batch_size)
 
+        if writer:
+            # Log batch-wise training loss
+            writer.add_scalar(f"Fold_{fold + 1}/Batch_Loss/Train", loss.item(), epoch * len(loader) + idx)
+
         print(
             f"Epoch {epoch}/{config.max_epochs} {idx}/{len(loader)}",
             f"loss: {run_loss.avg:.4f}",
@@ -42,6 +43,10 @@ def train_epoch(model, loader, optimizer, epoch, loss_func):
         )
 
         start_time = time.time()
+
+    # Log average training loss for the epoch
+    if writer:
+        writer.add_scalar(f"Fold_{fold + 1}/Loss/Train_Epoch", run_loss.avg, epoch)
 
     torch.cuda.empty_cache()
 
@@ -57,6 +62,8 @@ def val_epoch(
     model_inferer=None,
     post_activation=None,
     post_pred=None,
+    writer=None,
+    fold=0,
 ):
     model.eval()
     start_time = time.time()
@@ -102,5 +109,12 @@ def val_epoch(
                 ", time {:.2f}s".format(time.time() - start_time),
             )
             start_time = time.time()
+
+    # Log average validation loss and Dice scores for the epoch
+    if writer:
+        writer.add_scalar(f"Fold_{fold + 1}/Loss/Validation_Epoch", run_loss.avg, epoch)
+        writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_NCR", run_acc.avg[0], epoch)
+        writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ED", run_acc.avg[1], epoch)
+        writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ET", run_acc.avg[2], epoch)
 
     return run_acc.avg, run_loss.avg

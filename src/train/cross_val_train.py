@@ -16,6 +16,7 @@ from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
 from train import trainer
 import json 
+from torch.utils.tensorboard import SummaryWriter
 
 # Loss and accuracy
 loss_func = GeneralizedDiceFocalLoss(
@@ -58,6 +59,11 @@ def cross_validate_trainer(
 
     for fold, (train_loader, val_loader) in enumerate(fold_loaders):
         print(f"\nStarting Fold {fold + 1}/{num_folds}")
+
+        # Create a new log directory for each fold
+        fold_log_dir = f"./outputs/runs/experiment_1/fold_{fold + 1}"
+        os.makedirs(fold_log_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=fold_log_dir)  # Separate writer for each fold
         
         # Create a new model for each fold
         model = model_class().to(config.device)
@@ -95,6 +101,7 @@ def cross_validate_trainer(
             post_pred=post_pred,
             early_stopper=early_stopper,
             fold=fold,
+            writer=writer,
         )
 
         print(f"Finished Fold {fold + 1}, Best Dice Avg: {val_acc_max:.4f}")
@@ -108,6 +115,9 @@ def cross_validate_trainer(
             "dices_et": dices_et,
             "dices_avg": dices_avg,
         })
+        
+        # Close the writer for this fold
+        writer.close()
 
     # Calculate average performance across folds
     avg_dice_ncr = np.mean([r["dices_ncr"][-1] for r in fold_results])

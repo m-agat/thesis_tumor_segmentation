@@ -79,6 +79,7 @@ def trainer(
     post_pred=None,
     early_stopper=None,
     fold=0,
+    writer=None,
 ):
     val_acc_max = 0.0
     val_loss_min = float("inf")
@@ -91,13 +92,23 @@ def trainer(
     for epoch in range(start_epoch, config.max_epochs):
         print(time.ctime(), "Epoch:", epoch)
         epoch_time = time.time()
+
+        # Training epoch
         train_loss = train_epoch(
             model,
             train_loader,
             optimizer,
             epoch=epoch,
             loss_func=loss_func,
+            writer=writer,
+            fold=fold
         )
+
+        # Log learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        if writer:
+            writer.add_scalar(f"Fold_{fold + 1}/LearningRate", current_lr, epoch)
+
         print(
             "Final training  {}/{}".format(epoch, config.max_epochs - 1),
             "loss: {:.4f}".format(train_loss),
@@ -117,6 +128,8 @@ def trainer(
                 model_inferer=model_inferer,
                 post_activation=post_activation,
                 post_pred=post_pred,
+                writer=writer,
+                fold=fold
             )
             dice_ncr = val_acc[0]
             dice_ed = val_acc[1]
