@@ -51,6 +51,7 @@ def train_epoch(model, loader, optimizer, epoch, loss_func, writer=None, fold=0)
     if writer:
         writer.add_scalar(f"Fold_{fold + 1}/Loss/Train_Epoch", run_loss.avg, epoch)
 
+    del data, target, logits
     torch.cuda.empty_cache()
 
     return run_loss.avg
@@ -68,6 +69,9 @@ def val_epoch(
     writer=None,
     fold=0,
 ):
+    fold_dir = os.path.join(config.output_dir, f"fold_{fold + 1}_results")
+    os.makedirs(fold_dir, exist_ok=True)
+
     model.eval()
     start_time = time.time()
     run_acc = AverageMeter()
@@ -83,11 +87,6 @@ def val_epoch(
         reduction="none",  
         compute_sample=False  
     )
-
-    # Lists to store all predictions and ground truth for the epoch
-    all_probs = [] # probabilities for ROC curve
-    all_preds = [] # Predicted class labels for confusion matrix
-    all_labels = []# Ground truth labels
     
     with torch.no_grad():
         for idx, batch_data in enumerate(loader):
@@ -140,14 +139,15 @@ def val_epoch(
 
             # Create a confusion matrix 
             if epoch == config.max_epochs - 1:
-                y_pred_class = torch.argmax(torch.stack(val_output_convert), dim=1).cpu().numpy().flatten()  # Convert to class labels
-                y_true_class = torch.argmax(torch.stack(val_labels_list), dim=1).cpu().numpy().flatten()  # Convert to class labels
-                probs = [post_activation(val_pred_tensor) for val_pred_tensor in val_outputs_list]
-            
-                # Store probabilities, predictions and labels
-                all_probs.append(torch.stack(probs).cpu().numpy())
-                all_preds.append(y_pred_class)
-                all_labels.append(y_true_class)
+                probs = np.concatenate([post_activation(t).cpu().numpy() for t in val_outputs_list])  # Convert to numpy arrays
+                labels = np.concatenate([t.cpu().numpy() for t in val_labels_list])  # Ground truth labels as numpy arrays
+                preds = np.concatenate([post_pred(post_activation(t)).cpu().numpy() for t in val_outputs_list])  # Predictions as numpy arrays
+
+                np.savez_compressed(os.path.join(fold_dir, f"probs_batch_{idx}.npy"), probs) # save probabilities 
+                np.savez_compressed(os.path.join(fold_dir, f"true_labels_batch_{idx}.npy"), labels) # save ground truth labels
+                np.savez_compressed(os.path.join(fold_dir, f"pred_labels_batch_{idx}.npy"), preds) # save pred labels
+
+                del probs, labels, preds
 
             # Get metrics per subregion
             dice_ncr, dice_ed, dice_et = run_acc.avg
@@ -164,21 +164,8 @@ def val_epoch(
             )
             start_time = time.time()
 
-    # Log confusion matrix for the last epoch
-    if epoch == config.max_epochs - 1:
-        # Concatenate all batches to create a single array
-        y_prob_all = np.concatenate(all_probs)
-        y_pred_all = np.concatenate(all_preds)
-        y_true_all = np.concatenate(all_labels)
-
-        # Plot the confusion matrix and save it 
-        conf_max = plot_confusion_matrix(y_true_all, y_pred_all)
-        roc_curve = plot_roc_curve(y_true_all, y_prob_all, fold, epoch)
-
-        writer.add_figure(f"Fold_{fold + 1}/Confusion_Matrix/Epoch_{epoch}", conf_max, epoch)
-        writer.add_figure(f"Fold_{fold + 1}/ROC_Curve/Epoch_{epoch}", roc_curve, epoch)
-
-        print("Confusion matrix and ROC curve were generated and saved.")
+            del data, target, logits
+            torch.cuda.empty_cache()
 
     # Log average validation loss and Dice scores for the epoch
     if writer:
