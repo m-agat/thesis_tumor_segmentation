@@ -5,7 +5,7 @@ import torch
 import time
 import config.config as config
 import models.models as models
-from utils.utils import save_checkpoint, EarlyStopping
+from utils.utils import save_checkpoint, EarlyStopping, convert_to_serializable
 from train_helpers import train_epoch, val_epoch
 import numpy as np
 from functools import partial
@@ -51,7 +51,7 @@ def cross_validate_trainer(
     loss_func,
     acc_func,
     scheduler_func,
-    num_folds=5,
+    num_folds,
     post_activation=None,
     post_pred=None,
 ):
@@ -138,19 +138,14 @@ fold_results = cross_validate_trainer(
     loss_func=loss_func,
     acc_func=dice_acc,
     scheduler_func=scheduler_func,
-    num_folds=5,
+    num_folds=config.num_folds,
     post_activation=post_activation,
     post_pred=post_pred
 )
 
-for result in fold_results:
-    for key, value in result.items():
-        if isinstance(value, (np.float32, np.float64)):  # Check if value is a numpy float
-            result[key] = float(value)
-        elif isinstance(value, np.ndarray):  # Convert numpy arrays to lists
-            result[key] = value.tolist()
-            
-with open("cv_results.json", "w") as f:
-    json.dump(fold_results, f, indent=4)
+serializable_fold_results = convert_to_serializable(fold_results)
+
+with open(os.path.join(config.output_dir, "cv_results.json"), "w") as f:
+    json.dump(serializable_fold_results, f, indent=4)
 
 print("Cross-validation results saved to 'cv_results.json'")

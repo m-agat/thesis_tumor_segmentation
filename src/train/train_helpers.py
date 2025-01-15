@@ -178,6 +178,8 @@ def val_epoch(
         writer.add_figure(f"Fold_{fold + 1}/Confusion_Matrix/Epoch_{epoch}", conf_max, epoch)
         writer.add_figure(f"Fold_{fold + 1}/ROC_Curve/Epoch_{epoch}", roc_curve, epoch)
 
+        print("Confusion matrix and ROC curve were generated and saved.")
+
     # Log average validation loss and Dice scores for the epoch
     if writer:
         writer.add_scalar(f"Fold_{fold + 1}/Loss/Validation_Epoch", run_loss.avg, epoch)
