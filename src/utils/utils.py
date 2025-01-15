@@ -9,15 +9,8 @@ def save_checkpoint(model, epoch, filename="model.pt", best_acc=0, dir_add=None)
     state_dict = model.state_dict()
     save_dict = {"epoch": epoch, "best_acc": best_acc, "state_dict": state_dict}
 
-    # Use the outputs directory for saving in Azure ML environment
-    if dir_add is None:
-        dir_add = "./outputs"  # Azure ML outputs directory
-
-    # Create directory if it doesn't exist
-    os.makedirs(dir_add, exist_ok=True)
-
     # Construct the full file path
-    filename = os.path.join(dir_add, filename)
+    filename = os.path.join(config.output_dir, filename)
 
     # Save the checkpoint
     torch.save(save_dict, filename)
