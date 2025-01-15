@@ -115,7 +115,7 @@ def cross_validate_trainer(
             "dices_et": dices_et,
             "dices_avg": dices_avg,
         })
-        
+
         # Close the writer for this fold
         writer.close()
 
@@ -143,6 +143,13 @@ fold_results = cross_validate_trainer(
     post_pred=post_pred
 )
 
+for result in fold_results:
+    for key, value in result.items():
+        if isinstance(value, (np.float32, np.float64)):  # Check if value is a numpy float
+            result[key] = float(value)
+        elif isinstance(value, np.ndarray):  # Convert numpy arrays to lists
+            result[key] = value.tolist()
+            
 with open("cv_results.json", "w") as f:
     json.dump(fold_results, f, indent=4)
 
