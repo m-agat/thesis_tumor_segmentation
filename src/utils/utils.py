@@ -89,34 +89,19 @@ class EarlyStopping:
             )
             self.counter = 0
 
-
-def calculate_sensitivity(pred, true):
-    true_positives = (pred * true).sum(dim=(2, 3, 4))
-    false_negatives = ((1 - pred) * true).sum(dim=(2, 3, 4))
-    sensitivity = true_positives / (
-        true_positives + false_negatives + 1e-7
-    )  # Avoid division by zero
-    return sensitivity.mean().item()
-
-
-def calculate_specificity(pred, true):
-    true_negatives = ((1 - pred) * (1 - true)).sum(dim=(2, 3, 4))
-    false_positives = (pred * (1 - true)).sum(dim=(2, 3, 4))
-    specificity = true_negatives / (true_negatives + false_positives + 1e-7)
-    return specificity.mean().item()
-
-def save_nifti(data, affine, filename):
-    """
-    Save the given data as a NIfTI file.
-    
-    Args:
-        data (np.ndarray): 3D or 4D array to be saved as NIfTI.
-        affine (np.ndarray): Affine matrix for spatial orientation.
-        filename (str): Path where to save the NIfTI file.
-    """
-    nifti_img = nib.Nifti1Image(data, affine)
-    nib.save(nifti_img, filename)
-    print(f"Saved segmentation to {filename}")
+def convert_to_serializable(obj):
+    if isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, torch.Tensor):
+        return obj.cpu().numpy().tolist()  # Convert tensor to list
+    elif isinstance(obj, dict):
+        return {key: convert_to_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(item) for item in obj]
+    else:
+        return obj
 
 
 def visualize_slices(
