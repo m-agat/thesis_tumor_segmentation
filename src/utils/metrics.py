@@ -2,7 +2,6 @@ import numpy as np
 import torch
 from monai.metrics import compute_hausdorff_distance
 
-
 def compute_dice_score_per_tissue(prediction, ground_truth, tissue_label):
     """
     Compute the Dice score for a specific tissue type with single-channel prediction and ground truth.

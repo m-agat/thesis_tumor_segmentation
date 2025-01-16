@@ -1,23 +1,33 @@
-import sys
-sys.path.append("../")
+# Core Libraries
 import os
+import sys
+import json
+import numpy as np
 import torch
-import time
+from functools import partial
+
+# Add custom project modules to the path
+sys.path.append("../")
+
+# Project-Specific Imports
 import config.config as config
 import models.models as models
-from utils.utils import save_checkpoint, EarlyStopping
-from train_helpers import train_epoch, val_epoch
-import numpy as np
-from functools import partial
+from utils.utils import save_checkpoint, EarlyStopping, convert_to_serializable
+from train_pipeline import trainer 
+
+# MONAI Library Imports
 from monai.inferers import sliding_window_inference
 from monai.metrics import DiceMetric
 from monai.utils.enums import MetricReduction
 from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
-from train import trainer
-import json 
 
-# Loss and accuracy
+# PyTorch Utilities
+from torch.utils.tensorboard import SummaryWriter
+
+torch.manual_seed(42)
+
+# Loss 
 loss_func = GeneralizedDiceFocalLoss(
     include_background=False, # We focus on subregions, not background
     to_onehot_y=False, # One-hot encoded in the transformations
@@ -26,6 +36,7 @@ loss_func = GeneralizedDiceFocalLoss(
     w_type="square"
 )
 
+# Dice score
 dice_acc = DiceMetric(
     include_background=False, 
     reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
@@ -50,7 +61,7 @@ def cross_validate_trainer(
     loss_func,
     acc_func,
     scheduler_func,
-    num_folds=5,
+    num_folds,
     post_activation=None,
     post_pred=None,
 ):
@@ -58,6 +69,11 @@ def cross_validate_trainer(
 
     for fold, (train_loader, val_loader) in enumerate(fold_loaders):
         print(f"\nStarting Fold {fold + 1}/{num_folds}")
+
+        # Create a new log directory for each fold
+        fold_log_dir = f"./outputs/runs/experiment_1/fold_{fold + 1}"
+        os.makedirs(fold_log_dir, exist_ok=True)
+        writer = SummaryWriter(log_dir=fold_log_dir)  # Separate writer for each fold
         
         # Create a new model for each fold
         model = model_class().to(config.device)
@@ -81,7 +97,7 @@ def cross_validate_trainer(
         )
 
         # Run the trainer for this fold
-        val_acc_max, dices_ncr, dices_ed, dices_et, dices_avg, loss_epochs, trains_epoch = trainer(
+        val_acc_max, metrics_history = trainer(
             model=model,
             train_loader=train_loader,
             val_loader=val_loader,
@@ -95,28 +111,30 @@ def cross_validate_trainer(
             post_pred=post_pred,
             early_stopper=early_stopper,
             fold=fold,
+            writer=writer,
         )
 
         print(f"Finished Fold {fold + 1}, Best Dice Avg: {val_acc_max:.4f}")
         
         # Save fold results
-        fold_results.append({
-            "fold": fold + 1,
-            "val_acc_max": val_acc_max,
-            "dices_ncr": dices_ncr,
-            "dices_ed": dices_ed,
-            "dices_et": dices_et,
-            "dices_avg": dices_avg,
-        })
+        metrics_history["val_acc_max"] = val_acc_max
+        fold_results.append(metrics_history)
 
-    # Calculate average performance across folds
-    avg_dice_ncr = np.mean([r["dices_ncr"][-1] for r in fold_results])
-    avg_dice_ed = np.mean([r["dices_ed"][-1] for r in fold_results])
-    avg_dice_et = np.mean([r["dices_et"][-1] for r in fold_results])
-    avg_dice_total = np.mean([r["val_acc_max"] for r in fold_results])
+        # Close the writer for this fold
+        writer.close()
 
-    print(f"\nCross-Validation Results:")
-    print(f"Avg Dice NCR: {avg_dice_ncr:.4f}, ED: {avg_dice_ed:.4f}, ET: {avg_dice_et:.4f}, Total Avg Dice: {avg_dice_total:.4f}")
+        torch.cuda.empty_cache()
+
+    # Compute average metrics across folds
+    avg_metrics = {
+        key: np.nanmean([fold[key][-1] if isinstance(fold[key], (list, np.ndarray)) else fold[key] for fold in fold_results])
+        for key in fold_results[0]
+        if key not in {"loss_epochs", "trains_epoch", "val_acc_max"}
+    }
+
+    print("\nCross-Validation Results:")
+    for key, value in avg_metrics.items():
+        print(f"Avg {key.replace('_', ' ').title()}: {value:.4f}")
 
     return fold_results
 
@@ -128,12 +146,16 @@ fold_results = cross_validate_trainer(
     loss_func=loss_func,
     acc_func=dice_acc,
     scheduler_func=scheduler_func,
-    num_folds=5,
+    num_folds=config.num_folds,
     post_activation=post_activation,
     post_pred=post_pred
 )
 
-with open("cv_results.json", "w") as f:
-    json.dump(fold_results, f, indent=4)
+serializable_fold_results = convert_to_serializable(fold_results)
+cv_results_path = os.path.join(config.output_dir, f"{config.model_name}_cv_results.json")
+with open(cv_results_path, "w") as f:
+    json.dump(serializable_fold_results, f, indent=4)
 
-print("Cross-validation results saved to 'cv_results.json'")
+print(f"Cross-validation results saved to {cv_results_path}")
+
+# tensorboard access: tensorboard --logdir=./outputs/runs/experiment_1/fold_1

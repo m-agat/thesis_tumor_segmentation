@@ -11,7 +11,6 @@ def get_train_transforms(roi):
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
-            transforms.MapLabelValued(keys="label", orig_labels=[1, 2, 4], target_labels=[1, 2, 3]),
             transforms.EnsureChannelFirstd(keys=["label"]),
             transforms.AsDiscreted(keys="label", to_onehot=4),
             transforms.RandSpatialCropd(
@@ -39,7 +38,6 @@ def get_val_transforms():
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
-            transforms.MapLabelValued(keys="label", orig_labels=[1, 2, 4], target_labels=[1, 2, 3]),
             transforms.EnsureChannelFirstd(keys=["label"]), 
             transforms.AsDiscreted(keys="label", to_onehot=4),
         ]
@@ -57,7 +55,6 @@ def get_test_transforms():
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
-            transforms.MapLabelValued(keys="label", orig_labels=[1, 2, 4], target_labels=[1, 2, 3])
         ]
     )
     return test_transform

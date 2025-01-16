@@ -14,16 +14,16 @@ Split the BraTS2021 dataset into train-val-test
 random.seed(42)
 
 data_dir = (
-    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/TrainingData"
+    "/home/magata/data/brats2021challenge/RelabeledTrainingData"
 )
 train_dir = (
-    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/train"
+    "/home/magata/data/brats2021challenge/split/train"
 )
 val_dir = (
-    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/val"
+    "/home/magata/data/brats2021challenge/split/val"
 )
 test_dir = (
-    "/home/agata/Desktop/thesis_tumor_segmentation/data/brats2021challenge/split/test"
+    "/home/magata/data/brats2021challenge/split/test"
 )
 
 os.makedirs(train_dir, exist_ok=True)

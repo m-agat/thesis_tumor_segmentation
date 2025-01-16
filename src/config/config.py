@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument("--roi", type=int, nargs=3, default=[96, 96, 96], help="Region of interest size")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for data loaders")
     parser.add_argument("--sw_batch_size", type=int, default=1, help="Sliding window batch size")
-    parser.add_argument("--infer_overlap", type=float, default=0.5, help="Sliding window overlap")
+    parser.add_argument("--infer_overlap", type=float, default=0.25, help="Sliding window overlap")
     parser.add_argument("--subset_size", type=int, default=10, help="Size of subset for testing")
     return parser.parse_args()
 
@@ -141,7 +141,7 @@ torch.cuda.empty_cache()
 roi = tuple(args.roi if args.roi else config.get("roi", [64, 64, 64]))
 batch_size = args.batch_size or config.get("batch_size", 1)
 sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 1)
-infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.6)
+infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.25)
 max_epochs = config.get("max_epochs", 100)
 val_every = config.get("val_every", 5)
 
@@ -170,7 +170,7 @@ def get_subset(dataset, fraction, seed):
     indices = np.random.choice(len(dataset), subset_size, replace=False)  # Random subset
     return Subset(dataset, indices)
 
-subset_fraction = 0.05  # Use 10% of the data for speed-up
+subset_fraction = 0.05  # Use 20% of the data for speed-up
 subset_seed = 42 
 
 # Get subset datasets
