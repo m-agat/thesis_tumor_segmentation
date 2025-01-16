@@ -1,50 +1,6 @@
 import numpy as np
 import torch
 from monai.metrics import compute_hausdorff_distance
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
-import matplotlib.pyplot as plt
-
-def plot_confusion_matrix(y_true, y_pred, class_names=["Background", "NCR", "ED", "ET"]):
-    # Compute confusion matrix
-    cm = confusion_matrix(y_true.flatten(), y_pred.flatten(), labels=[0, 1, 2, 3], normalize='true')
-
-    # Plot confusion matrix as a figure
-    fig, ax = plt.subplots(figsize=(8, 8))
-    disp = ConfusionMatrixDisplay(cm, display_labels=class_names)
-    disp.plot(cmap="Blues", ax=ax)
-    plt.title("Confusion Matrix for Tumor Subregions")
-    plt.close(fig)  # Close figure to prevent display during training
-    return fig
-
-
-def plot_roc_curve(y_true_all, y_prob_all, fold, epoch):
-    """
-    Plots ROC curves for NCR, ED, ET subregions.
-    """
-    class_labels = ["NCR", "ED", "ET"]
-    fig, ax = plt.subplots(figsize=(10, 8))  # Create figure object for TensorBoard
-
-    for i, class_label in enumerate(class_labels):
-        # Convert to binary format for the subregion
-        y_true_binary = (y_true_all == i + 1).astype(int).flatten()  # 1 for the subregion, 0 for others
-        y_pred_probs = y_prob_all[:, i + 1].flatten()  # Predicted probabilities for the subregion
-
-        # Compute FPR, TPR, and AUC
-        fpr, tpr, _ = roc_curve(y_true_binary, y_pred_probs)
-        auc_score = auc(fpr, tpr)
-
-        # Plot the ROC curve for the subregion
-        ax.plot(fpr, tpr, label=f"{class_label} (AUC = {auc_score:.4f})")
-
-    ax.plot([0, 1], [0, 1], linestyle='--', color='gray')  # Random chance line
-    ax.set_xlabel("False Positive Rate")
-    ax.set_ylabel("True Positive Rate")
-    ax.set_title("ROC Curves for Tumor Subregions")
-    ax.legend(loc="lower right")
-    plt.close(fig)
-    
-    return fig 
-
 
 def compute_dice_score_per_tissue(prediction, ground_truth, tissue_label):
     """
