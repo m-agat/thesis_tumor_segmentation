@@ -6,7 +6,7 @@ import time
 import config.config as config
 import models.models as models
 from utils.utils import save_checkpoint, EarlyStopping
-from train_helpers import train_epoch, val_epoch
+from src.train.train_pipeline import train_epoch, val_epoch
 import numpy as np
 from functools import partial
 from monai.inferers import sliding_window_inference

@@ -1,17 +1,22 @@
 import torch
 import time
 import os
-from utils.metrics import plot_confusion_matrix, plot_roc_curve
-from utils.utils import AverageMeter
-from monai.data import decollate_batch
-import config.config as config
-from torch.cuda.amp import autocast, GradScaler
-from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
 import numpy as np 
+import sys
+from torch.cuda.amp import autocast, GradScaler
 
-scaler = GradScaler()
+# Custom modules
+sys.path.append("../")
+from utils.utils import AverageMeter, save_checkpoint
+import config.config as config
 
-def train_epoch(model, loader, optimizer, epoch, loss_func, writer=None, fold=0):
+# MONAI
+from monai.data import decollate_batch
+from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
+from monai.inferers import sliding_window_inference
+
+
+def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None, fold=0):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -88,7 +93,7 @@ def val_epoch(
         compute_sample=False  
     )
     
-    with torch.no_grad():
+    with torch.no_grad(), autocast():
         for idx, batch_data in enumerate(loader):
             data, target = batch_data["image"].to(config.device), batch_data[
                 "label"
@@ -137,17 +142,24 @@ def val_epoch(
             run_sensitivity.update(sensitivity.cpu().numpy(), n=config.batch_size)
             run_specificity.update(specificity.cpu().numpy(), n=config.batch_size)
 
-            # Create a confusion matrix 
             if epoch == config.max_epochs - 1:
-                probs = np.concatenate([post_activation(t).cpu().numpy() for t in val_outputs_list])  # Convert to numpy arrays
-                labels = np.concatenate([t.cpu().numpy() for t in val_labels_list])  # Ground truth labels as numpy arrays
-                preds = np.concatenate([post_pred(post_activation(t)).cpu().numpy() for t in val_outputs_list])  # Predictions as numpy arrays
+                # Get probabilities
+                probs = np.stack(
+                    [post_activation(val_pred_tensor).cpu().numpy() for val_pred_tensor in val_outputs_list]
+                )
 
-                np.savez_compressed(os.path.join(fold_dir, f"probs_batch_{idx}.npy"), probs) # save probabilities 
-                np.savez_compressed(os.path.join(fold_dir, f"true_labels_batch_{idx}.npy"), labels) # save ground truth labels
-                np.savez_compressed(os.path.join(fold_dir, f"pred_labels_batch_{idx}.npy"), preds) # save pred labels
+                # Get ground truth class labels
+                y_true_class = torch.argmax(torch.stack(val_labels_list), dim=1).cpu().numpy().flatten()
 
-                del probs, labels, preds
+                # Get predicted class labels
+                y_pred_class = torch.argmax(torch.stack(val_output_convert), dim=1).cpu().numpy().flatten()
+
+                # Save files
+                np.savez_compressed(os.path.join(fold_dir, f"probs_batch_{idx}.npz"), probs)
+                np.savez_compressed(os.path.join(fold_dir, f"true_labels_batch_{idx}.npz"), y_true_class)
+                np.savez_compressed(os.path.join(fold_dir, f"pred_labels_batch_{idx}.npz"), y_pred_class)
+
+                del probs, y_true_class, y_pred_class
 
             # Get metrics per subregion
             dice_ncr, dice_ed, dice_et = run_acc.avg
@@ -183,4 +195,140 @@ def val_epoch(
         writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ED", run_specificity.avg[1], epoch)
         writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ET", run_specificity.avg[2], epoch)
 
-    return run_acc.avg, run_loss.avg
+    return run_acc.avg, run_loss.avg, run_hd95_meter.avg, run_sensitivity.avg, run_specificity.avg 
+
+def trainer(
+    model,
+    train_loader,
+    val_loader,
+    optimizer,
+    loss_func,
+    acc_func,
+    scheduler,
+    model_inferer=None,
+    start_epoch=0,
+    post_activation=None,
+    post_pred=None,
+    early_stopper=None,
+    fold=0,
+    writer=None,
+):
+    val_acc_max = 0.0
+    val_loss_min = float("inf")
+    metrics_history = {
+        "dice_ncr": [],
+        "dice_ed": [],
+        "dice_et": [],
+        "hd95_ncr": [],
+        "hd95_ed": [],
+        "hd95_et": [],
+        "sensitivity_ncr": [],
+        "sensitivity_ed": [],
+        "sensitivity_et": [],
+        "specificity_ncr": [],
+        "specificity_ed": [],
+        "specificity_et": [],
+        "loss_epochs": [],
+        "trains_epoch":[]
+    }
+
+    scaler = GradScaler()
+
+    for epoch in range(start_epoch, config.max_epochs):
+        print(time.ctime(), "Epoch:", epoch)
+        epoch_time = time.time()
+
+        # Training epoch
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            scaler=scaler,
+            epoch=epoch,
+            loss_func=loss_func,
+            writer=writer,
+            fold=fold
+        )
+
+        # Log learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        if writer:
+            writer.add_scalar(f"Fold_{fold + 1}/LearningRate", current_lr, epoch)
+
+        print(
+            "Final training  {}/{}".format(epoch, config.max_epochs - 1),
+            "loss: {:.4f}".format(train_loss),
+            "time {:.2f}s".format(time.time() - epoch_time),
+        )
+
+        if (epoch + 1) % config.val_every == 0 or epoch == 0:
+            metrics_history["loss_epochs"].append(train_loss)
+            metrics_history["trains_epoch"].append(epoch)
+            epoch_time = time.time()
+
+            # Validation step
+            val_acc, val_loss, hd95_scores, sensitivity_scores, specificity_scores = val_epoch(
+                model,
+                val_loader,
+                epoch=epoch,
+                acc_func=acc_func,
+                loss_func=loss_func,
+                model_inferer=model_inferer,
+                post_activation=post_activation,
+                post_pred=post_pred,
+                writer=writer,
+                fold=fold,
+            )
+
+            dice_ncr, dice_ed, dice_et = val_acc
+            val_avg_acc = np.mean(val_acc)
+
+            print(
+                "Final validation stats {}/{}".format(epoch, config.max_epochs - 1),
+                f", dice_ncr: {dice_ncr:.4f}, dice_ed: {dice_ed:.4f}, dice_et: {dice_et:.4f}",
+                f", Dice_Avg: {val_avg_acc:.4f}",
+                f", time: {time.time() - epoch_time:.2f}s",
+            )
+
+            # Store metrics for each subregion
+            for key, values in zip(
+                ["dice_ncr", "dice_ed", "dice_et"], val_acc
+            ):
+                metrics_history[key].append(values)
+
+            for key, values in zip(
+                ["hd95_ncr", "hd95_ed", "hd95_et"], hd95_scores
+            ):
+                metrics_history[key].append(values)
+
+            for key, values in zip(
+                ["sensitivity_ncr", "sensitivity_ed", "sensitivity_et"], sensitivity_scores
+            ):
+                metrics_history[key].append(values)
+
+            for key, values in zip(
+                ["specificity_ncr", "specificity_ed", "specificity_et"], specificity_scores
+            ):
+                metrics_history[key].append(values)
+
+            if val_avg_acc > val_acc_max:
+                print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
+                val_acc_max = val_avg_acc
+                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"model_best_acc_fold_{fold + 1}.pt")
+
+            if val_loss < val_loss_min:
+                print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
+                val_loss_min = val_loss
+                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"model_bestloss_fold_{fold + 1}.pt")
+
+            scheduler.step()
+
+            # Check for early stopping
+            if early_stopper is not None:
+                early_stopper(val_avg_acc, model, epoch, val_acc_max)
+                if early_stopper.early_stop:
+                    print("Early stopping triggered. Stopping training.")
+                    break
+
+    print("Training Finished !, Best Accuracy: ", val_acc_max)
+    return val_acc_max, metrics_history
