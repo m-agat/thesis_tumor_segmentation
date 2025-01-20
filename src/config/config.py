@@ -86,7 +86,8 @@ config = load_config()
 
 # Root directories and paths
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-root_dir = args.data_path or config.get("root_dir_local", "/home/magata/data/brats2021challenge")
+root_dir = args.data_path or config.get("root_dir", "/home/magata/data/brats2021challenge")
+json_path = args.data_path or config.get("json_path", "/home/magata/data/brats2021challenge/splits/data_splits.json")
 
 train_folder = convert_path(os.path.join(root_dir, config.get("train_subdir", "split/train")))
 val_folder = convert_path(os.path.join(root_dir, config.get("val_subdir", "split/val")))
@@ -119,9 +120,6 @@ def print_config_summary():
     print("--------------------------------------")
     print(f"Project root: {project_root}")
     print(f"Root directory for data: {root_dir}")
-    print(f"Train folder: {train_folder}")
-    print(f"Validation folder: {val_folder}")
-    print(f"Test folder: {test_folder}")
     print(f"Model path: {model_file_path}")
     print(f"Output directory: {output_dir}")
     print(f"Device: {device}")
@@ -144,45 +142,13 @@ sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 1)
 infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.25)
 max_epochs = config.get("max_epochs", 100)
 val_every = config.get("val_every", 5)
+num_folds = config.get("num_folds", 5)
 
 # ---------------------------------
 # 6. Data Loaders
 # ---------------------------------
 # Initialize data loaders
-train_loader, val_loader = dataloaders.get_loaders(batch_size, train_folder, val_folder, roi)
-test_loader = dataloaders.load_test_data(test_folder)
-
-print("Data loaders loaded.")
-
-# Cross-validation data loaders
-all_files = dataloaders_cv.read_data_from_folders(cross_val_folder)
-num_folds = 5  # Number of cross-validation folds
-
-# Get datasets and data loaders for cross-validation
-train_datasets, val_datasets = dataloaders_cv.create_cross_validation_datasets(
-    data_list=all_files, num_folds=num_folds, train_transform=transforms.get_train_transforms(roi),
-    val_transform=transforms.get_val_transforms()
-)
-
-def get_subset(dataset, fraction, seed):
-    np.random.seed(seed)
-    subset_size = int(len(dataset) * fraction)
-    indices = np.random.choice(len(dataset), subset_size, replace=False)  # Random subset
-    return Subset(dataset, indices)
-
-subset_fraction = 0.05  # Use 20% of the data for speed-up
-subset_seed = 42 
-
-# Get subset datasets
-subset_train_datasets = [get_subset(ds, subset_fraction, subset_seed) for ds in train_datasets]
-subset_val_datasets = [get_subset(ds, subset_fraction, subset_seed) for ds in val_datasets]
-
-# Get data loaders for subset datasets
-subset_fold_loaders = dataloaders_cv.get_data_loaders_for_folds(subset_train_datasets, subset_val_datasets, batch_size)
-
-fold_loaders = dataloaders_cv.get_data_loaders_for_folds(train_datasets, val_datasets, batch_size)
-
-print("Cross-validation data loaders loaded.")
+test_loader = dataloaders.load_test_data(json_path, root_dir)
 
 # ---------------------------------
 # 7. Helper Functions

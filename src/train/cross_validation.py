@@ -14,6 +14,7 @@ import config.config as config
 import models.models as models
 from utils.utils import save_checkpoint, EarlyStopping, convert_to_serializable
 from train_pipeline import trainer 
+import dataset.dataloaders as dataloaders 
 
 # MONAI Library Imports
 from monai.inferers import sliding_window_inference
@@ -56,7 +57,6 @@ post_pred = AsDiscrete(argmax=True, to_onehot=4) # get the class with the highes
 
 def cross_validate_trainer(
     model_class,  # Pass the model class so that a new instance is created for each fold
-    fold_loaders,
     optimizer_func,
     loss_func,
     acc_func,
@@ -67,11 +67,21 @@ def cross_validate_trainer(
 ):
     fold_results = []  # To store performance metrics for each fold
 
-    for fold, (train_loader, val_loader) in enumerate(fold_loaders):
+    for fold in range(num_folds):
         print(f"\nStarting Fold {fold + 1}/{num_folds}")
 
+        train_loader, val_loader = dataloaders.get_loaders(
+            batch_size=config.batch_size, 
+            json_path=config.json_path, 
+            basedir=config.root_dir, 
+            fold=fold, 
+            roi=config.roi
+        )
+
+        print(f"Data loaders for fold {fold} loaded.\n")
+
         # Create a new log directory for each fold
-        fold_log_dir = f"./outputs/runs/experiment_1/fold_{fold + 1}"
+        fold_log_dir = f"./outputs/runs/fold_{fold + 1}"
         os.makedirs(fold_log_dir, exist_ok=True)
         writer = SummaryWriter(log_dir=fold_log_dir)  # Separate writer for each fold
         
@@ -141,7 +151,6 @@ def cross_validate_trainer(
 # Perform Cross-Validation
 fold_results = cross_validate_trainer(
     model_class=lambda: models.models_dict[f"{config.model_name}_model.pt"],
-    fold_loaders=config.subset_fold_loaders, 
     optimizer_func=optimizer_func,
     loss_func=loss_func,
     acc_func=dice_acc,
@@ -158,4 +167,4 @@ with open(cv_results_path, "w") as f:
 
 print(f"Cross-validation results saved to {cv_results_path}")
 
-# tensorboard access: tensorboard --logdir=./outputs/runs/experiment_1/fold_1
+# tensorboard --logdir=./outputs/runs/experiment_1
