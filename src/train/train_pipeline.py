@@ -13,7 +13,6 @@ import config.config as config
 # MONAI
 from monai.data import decollate_batch
 from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
-from monai.inferers import sliding_window_inference
 
 
 def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None, fold=0):
@@ -116,7 +115,12 @@ def val_epoch(
             acc_func.reset()
             acc_func(y_pred=val_output_convert, y=val_labels_list)
             acc, not_nans = acc_func.aggregate()
-            run_acc.update(acc.cpu().numpy(), n=not_nans.cpu().numpy())
+            dice_scores = acc.cpu().numpy()
+            for i, dice_score in enumerate(dice_scores):
+                if not_nans[i] == 0:  # Tissue is absent in ground truth
+                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    dice_scores[i] = 1.0 if pred_empty else 0.0
+            run_acc.update(dice_scores, n=not_nans.cpu().numpy())
 
             # Compute Hausdorff 95 Distance 
             hd95 = compute_hausdorff_distance(
@@ -128,8 +132,17 @@ def val_epoch(
             )
 
             # Update HD95 meter for all subregions
-            hd95 = hd95.squeeze(0)  
-            run_hd95_meter.update(hd95.cpu().numpy(), n=config.batch_size)
+            hd95 = hd95.squeeze(0).cpu().numpy()  
+            for i in range(len(hd95)):
+                # Check if ground truth for the tissue is empty
+                if np.sum(val_labels_list[0][i]) == 0:
+                    # Check if the prediction is also empty
+                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    hd95[i] = 0.0 if pred_empty else np.inf
+                elif np.isnan(hd95[i]) or np.isinf(hd95[i]):
+                    # Handle invalid values from HD95 computation
+                    hd95[i] = np.nan
+            run_hd95_meter.update(hd95, n=config.batch_size)
 
             # Compute Sensitivity and Specificity
             confusion_metric.reset()
@@ -137,10 +150,15 @@ def val_epoch(
             sensitivity, specificity = confusion_metric.aggregate()
 
             # Update sensitivity and specificity meters
-            sensitivity = sensitivity.squeeze(0)  # Shape becomes [3]
-            specificity = specificity.squeeze(0)
-            run_sensitivity.update(sensitivity.cpu().numpy(), n=config.batch_size)
-            run_specificity.update(specificity.cpu().numpy(), n=config.batch_size)
+            sensitivity = sensitivity.squeeze(0).cpu().numpy()  # Shape becomes [3]
+            specificity = specificity.squeeze(0).cpu().numpy()
+            for i in range(len(sensitivity)):
+                if not_nans[i] == 0:  # Tissue is absent
+                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    sensitivity[i] = 1.0 if pred_empty else 0.0
+                    specificity[i] = 1.0
+            run_sensitivity.update(sensitivity, n=config.batch_size)
+            run_specificity.update(specificity, n=config.batch_size)
 
             if epoch == config.max_epochs - 1:
                 # Get probabilities
@@ -195,7 +213,8 @@ def val_epoch(
         writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ED", run_specificity.avg[1], epoch)
         writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ET", run_specificity.avg[2], epoch)
 
-    return run_acc.avg, run_loss.avg, run_hd95_meter.avg, run_sensitivity.avg, run_specificity.avg 
+    return np.nanmean(run_acc.avg), np.nanmean(run_loss.avg), np.nanmean(run_hd95_meter.avg), \
+            np.nanmean(run_sensitivity.avg), np.nanmean(run_specificity.avg) 
 
 def trainer(
     model,
@@ -281,7 +300,7 @@ def trainer(
             )
 
             dice_ncr, dice_ed, dice_et = val_acc
-            val_avg_acc = np.mean(val_acc)
+            val_avg_acc = np.nanmean(val_acc)
 
             print(
                 "Final validation stats {}/{}".format(epoch, config.max_epochs - 1),
