@@ -11,49 +11,15 @@ sys.path.append("../")
 
 # Project-Specific Imports
 import config.config as config
-import models.models as models
-from utils.utils import save_checkpoint, EarlyStopping, convert_to_serializable
+from utils.utils import save_checkpoint, EarlyStopping
 from train_pipeline import trainer 
 import dataset.dataloaders as dataloaders 
 
 # MONAI Library Imports
 from monai.inferers import sliding_window_inference
-from monai.metrics import DiceMetric
-from monai.utils.enums import MetricReduction
-from monai.losses import GeneralizedDiceFocalLoss
-from monai.transforms import AsDiscrete, Activations
 
 # PyTorch Utilities
 from torch.utils.tensorboard import SummaryWriter
-
-torch.manual_seed(42)
-
-# Loss 
-loss_func = GeneralizedDiceFocalLoss(
-    include_background=False, # We focus on subregions, not background
-    to_onehot_y=False, # One-hot encoded in the transformations
-    sigmoid=False, # Use softmax for multi-class segmentation
-    softmax=True, # Multi-class softmax output
-    w_type="square"
-)
-
-# Dice score
-dice_acc = DiceMetric(
-    include_background=False, 
-    reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
-    get_not_nans=True,
-)
-
-# Optimizer and scheduler
-def optimizer_func(params):
-    return torch.optim.AdamW(params, lr=1e-4, weight_decay=1e-5)
-
-def scheduler_func(optimizer):
-    return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.max_epochs)
-
-# Post-processing transforms
-post_activation = Activations(softmax=True) # Softmax for multi-class output
-post_pred = AsDiscrete(argmax=True, to_onehot=4) # get the class with the highest prob for each channel
 
 def cross_validate_trainer(
     model_class,  # Pass the model class so that a new instance is created for each fold
@@ -135,36 +101,22 @@ def cross_validate_trainer(
 
         torch.cuda.empty_cache()
 
+    print("fold res: ", fold_results)
+    print("metrics his", metrics_history)
     # Compute average metrics across folds
     avg_metrics = {
-        key: np.nanmean([fold[key][-1] if isinstance(fold[key], (list, np.ndarray)) else fold[key] for fold in fold_results])
+    key: np.nanmean([fold[key][-1] if isinstance(fold[key], (list, np.ndarray)) else fold[key] for fold in fold_results])
         for key in fold_results[0]
         if key not in {"loss_epochs", "trains_epoch", "val_acc_max"}
     }
+
+    avg_metrics["avg_dice"] = np.nanmean([fold["dice"] for fold in fold_results])
+    avg_metrics["avg_hd95"] = np.nanmean([fold["hd95"] for fold in fold_results])
+    avg_metrics["avg_sensitivity"] = np.nanmean([fold["sensitivity"] for fold in fold_results])
+    avg_metrics["avg_specificity"] = np.nanmean([fold["specificity"] for fold in fold_results])
 
     print("\nCross-Validation Results:")
     for key, value in avg_metrics.items():
         print(f"Avg {key.replace('_', ' ').title()}: {value:.4f}")
 
-    return fold_results
-
-# Perform Cross-Validation
-fold_results = cross_validate_trainer(
-    model_class=lambda: models.models_dict[f"{config.model_name}_model.pt"],
-    optimizer_func=optimizer_func,
-    loss_func=loss_func,
-    acc_func=dice_acc,
-    scheduler_func=scheduler_func,
-    num_folds=config.num_folds,
-    post_activation=post_activation,
-    post_pred=post_pred
-)
-
-serializable_fold_results = convert_to_serializable(fold_results)
-cv_results_path = os.path.join(config.output_dir, f"{config.model_name}_cv_results.json")
-with open(cv_results_path, "w") as f:
-    json.dump(serializable_fold_results, f, indent=4)
-
-print(f"Cross-validation results saved to {cv_results_path}")
-
-# tensorboard --logdir=./outputs/runs/experiment_1
+    return fold_results, avg_metrics

@@ -133,15 +133,6 @@ def val_epoch(
 
             # Update HD95 meter for all subregions
             hd95 = hd95.squeeze(0).cpu().numpy()  
-            for i in range(len(hd95)):
-                # Check if ground truth for the tissue is empty
-                if np.sum(val_labels_list[0][i]) == 0:
-                    # Check if the prediction is also empty
-                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
-                    hd95[i] = 0.0 if pred_empty else np.inf
-                elif np.isnan(hd95[i]) or np.isinf(hd95[i]):
-                    # Handle invalid values from HD95 computation
-                    hd95[i] = np.nan
             run_hd95_meter.update(hd95, n=config.batch_size)
 
             # Compute Sensitivity and Specificity
@@ -213,8 +204,8 @@ def val_epoch(
         writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ED", run_specificity.avg[1], epoch)
         writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ET", run_specificity.avg[2], epoch)
 
-    return np.nanmean(run_acc.avg), np.nanmean(run_loss.avg), np.nanmean(run_hd95_meter.avg), \
-            np.nanmean(run_sensitivity.avg), np.nanmean(run_specificity.avg) 
+    return run_acc.avg, run_loss.avg, run_hd95_meter.avg, \
+            run_sensitivity.avg, run_specificity.avg 
 
 def trainer(
     model,
@@ -252,6 +243,11 @@ def trainer(
     }
 
     scaler = GradScaler()
+
+    # Hyperparameters
+    initial_lr = optimizer.param_groups[0]['lr']
+    weight_decay_value = optimizer.param_groups[0]['weight_decay']
+    optimizer_name = optimizer.__class__.__name__
 
     for epoch in range(start_epoch, config.max_epochs):
         print(time.ctime(), "Epoch:", epoch)
@@ -333,12 +329,12 @@ def trainer(
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
-                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"model_best_acc_fold_{fold + 1}.pt")
+                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"{optimizer_name}_lr_{initial_lr}_{weight_decay_value}_best_acc_fold_{fold + 1}.pt")
 
             if val_loss < val_loss_min:
                 print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
                 val_loss_min = val_loss
-                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"model_bestloss_fold_{fold + 1}.pt")
+                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"{optimizer_name}_lr_{initial_lr}_{weight_decay_value}_bestloss_fold_{fold + 1}.pt")
 
             scheduler.step()
 
@@ -348,6 +344,26 @@ def trainer(
                 if early_stopper.early_stop:
                     print("Early stopping triggered. Stopping training.")
                     break
-
+    
+    metrics_history["dice"] = np.nanmean([
+        np.nanmean(metrics_history["dice_ncr"]),
+        np.nanmean(metrics_history["dice_ed"]),
+        np.nanmean(metrics_history["dice_et"]),
+    ])
+    metrics_history["hd95"] = np.nanmean([
+        np.nanmean(metrics_history["hd95_ncr"]),
+        np.nanmean(metrics_history["hd95_ed"]),
+        np.nanmean(metrics_history["hd95_et"]),
+    ])
+    metrics_history["sensitivity"] = np.nanmean([
+        np.nanmean(metrics_history["sensitivity_ncr"]),
+        np.nanmean(metrics_history["sensitivity_ed"]),
+        np.nanmean(metrics_history["sensitivity_et"]),
+    ])
+    metrics_history["specificity"] = np.nanmean([
+        np.nanmean(metrics_history["specificity_ncr"]),
+        np.nanmean(metrics_history["specificity_ed"]),
+        np.nanmean(metrics_history["specificity_et"]),
+    ])
     print("Training Finished !, Best Accuracy: ", val_acc_max)
     return val_acc_max, metrics_history
