@@ -53,9 +53,6 @@ def get_loaders(batch_size, json_path, basedir, fold, roi):
     # Load train and validation files
     train_files, val_files = load_folds_data(json_path=json_path, basedir=basedir, fold=fold)
 
-    train_files = train_files[:50]
-    val_files = val_files[:10]
-
     # Get the global and local transforms for multi-class segmentation
     train_transform = get_train_transforms(roi)
     val_transform = get_val_transforms()
@@ -66,10 +63,10 @@ def get_loaders(batch_size, json_path, basedir, fold, roi):
 
     # Create data loaders
     train_loader = data.DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True
+        train_ds, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True
     )
     val_loader = data.DataLoader(
-        val_ds, batch_size=1, shuffle=False, num_workers=2, pin_memory=True
+        val_ds, batch_size=1, shuffle=False, num_workers=8, pin_memory=True
     )
 
     return train_loader, val_loader
