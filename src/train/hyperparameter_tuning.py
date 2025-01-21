@@ -19,6 +19,9 @@ from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
                   
 import torch
+# Enable cuDNN benchmark for optimized performance
+torch.backends.cudnn.benchmark = True 
+
 torch.manual_seed(42)     
 
 # Loss 
@@ -52,11 +55,11 @@ hyperparameter_space = {
     "weight_decay": [1e-5, 1e-4],
 }
 
-configs = list(itertools.product(
+configs = random.sample(list(itertools.product(
     hyperparameter_space["learning_rate"],
     hyperparameter_space["optimizer"],
     hyperparameter_space["weight_decay"]
-))
+)), 10)
 
 # Store results for each configuration
 tuning_results = []
@@ -94,9 +97,6 @@ for idx, (lr, opt, wd) in enumerate(configs):
         "avg_sensitivity": avg_metrics.get("avg_sensitivity", None),
         "avg_specificity": avg_metrics.get("avg_specificity", None),
     })
-
-    if idx == 0:
-        break
 
 # Sort results by the average Dice score
 tuning_results.sort(key=lambda x: x["avg_dice"], reverse=True)

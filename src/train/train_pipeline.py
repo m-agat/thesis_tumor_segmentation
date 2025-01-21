@@ -39,7 +39,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
 
         run_loss.update(loss.item(), n=config.batch_size)
 
-        if writer:
+        if writer and idx % 10 == 0:
             # Log batch-wise training loss
             writer.add_scalar(f"Fold_{fold + 1}/Batch_Loss/Train", loss.item(), epoch * len(loader) + idx)
 
@@ -72,8 +72,14 @@ def val_epoch(
     post_pred=None,
     writer=None,
     fold=0,
+    optimizer_name=None,
+    initial_lr=None,
+    weight_decay_value=None
 ):
-    fold_dir = os.path.join(config.output_dir, f"fold_{fold + 1}_results")
+    fold_dir = os.path.join(
+        config.output_dir,
+        f"fold_{fold + 1}_results_{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}"
+    )
     os.makedirs(fold_dir, exist_ok=True)
 
     model.eval()
@@ -293,6 +299,9 @@ def trainer(
                 post_pred=post_pred,
                 writer=writer,
                 fold=fold,
+                optimizer_name=optimizer_name,
+                initial_lr=initial_lr,
+                weight_decay_value=weight_decay_value
             )
 
             dice_ncr, dice_ed, dice_et = val_acc
@@ -329,17 +338,17 @@ def trainer(
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
-                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"{optimizer_name}_lr_{initial_lr}_{weight_decay_value}_best_acc_fold_{fold + 1}.pt")
+                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_best_acc_fold_{fold + 1}.pt")
 
             if val_loss < val_loss_min:
                 print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
                 val_loss_min = val_loss
-                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"{optimizer_name}_lr_{initial_lr}_{weight_decay_value}_bestloss_fold_{fold + 1}.pt")
+                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_bestloss_fold_{fold + 1}.pt")
 
             scheduler.step()
 
             # Check for early stopping
-            if early_stopper is not None:
+            if early_stopper is not None and epoch > 10: # trigger only after at least 10 epochs of training
                 early_stopper(val_avg_acc, model, epoch, val_acc_max)
                 if early_stopper.early_stop:
                     print("Early stopping triggered. Stopping training.")
