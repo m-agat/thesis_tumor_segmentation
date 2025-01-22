@@ -5,85 +5,86 @@ from dataset.transforms import (
     get_val_transforms,
     get_test_transforms,
 )
+import json
+import numpy as np 
+from torch.utils.data import Subset
 
+def get_subset(dataset, fraction, seed):
+    np.random.seed(seed)
+    subset_size = int(len(dataset) * fraction)
+    indices = np.random.choice(len(dataset), subset_size, replace=False)  # Random subset
+    return Subset(dataset, indices)
 
-def read_data_from_folders(train_folder, val_folder):
+def load_folds_data(json_path, basedir, fold):
     """
-    Read training and validation data from specific folders.
+    Load training and validation data for a specific fold from the JSON file.
+
+    Args:
+        json_path (str): Path to the JSON file containing data splits.
+        basedir (str): Base directory to prepend to the file paths.
+        fold (int): Fold number to select validation data.
+
+    Returns:
+        tuple: A tuple containing training data and validation data lists.
     """
+    with open(json_path, 'r') as f:
+        data = json.load(f)
 
-    def load_cases_from_folder(folder):
-        cases = [f for f in os.listdir(folder) if f.startswith("BraTS2021")]
-        files = []
-        for case in cases:
-            files.append(
-                {
-                    "image": [
-                        os.path.join(folder, case, f"{case}_flair.nii.gz"),
-                        os.path.join(folder, case, f"{case}_t1ce.nii.gz"),
-                        os.path.join(folder, case, f"{case}_t1.nii.gz"),
-                        os.path.join(folder, case, f"{case}_t2.nii.gz"),
-                    ],
-                    "label": os.path.join(folder, case, f"{case}_seg.nii.gz"),
-                    "path": case,
-                }
-            )
-        return files
+    training_files = []
+    for entry in data['training']:
+        if entry.get('fold') == fold:  
+            entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
+            entry['label'] = os.path.join(basedir, entry['label'])
+            training_files.append(entry)
 
-    # Load train and validation files
-    train_files = load_cases_from_folder(train_folder)
-    val_files = load_cases_from_folder(val_folder)
+    validation_files = []
+    for entry in data['validation']:
+        if entry.get('fold') == fold:  
+            entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
+            entry['label'] = os.path.join(basedir, entry['label'])
+            validation_files.append(entry)
 
-    return train_files, val_files
+    return training_files, validation_files
 
-
-def get_loaders(batch_size, train_folder, val_folder, roi):
+def get_loaders(batch_size, json_path, basedir, fold, roi):
     """
     Create data loaders for the second stage, focusing on multi-class segmentation.
     """
     # Load train and validation files
-    train_files, val_files = read_data_from_folders(train_folder, val_folder)
+    train_files, val_files = load_folds_data(json_path=json_path, basedir=basedir, fold=fold)
 
     # Get the global and local transforms for multi-class segmentation
     train_transform = get_train_transforms(roi)
     val_transform = get_val_transforms()
 
     # Create datasets with global and local patches
-    mc_train_ds = data.Dataset(data=train_files, transform=train_transform)
+    train_ds = data.Dataset(data=train_files, transform=train_transform)
     val_ds = data.Dataset(data=val_files, transform=val_transform)
 
     # Create data loaders
-    local_train_loader = data.DataLoader(
-        mc_train_ds, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True
+    train_loader = data.DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True
     )
     val_loader = data.DataLoader(
-        val_ds, batch_size=1, shuffle=False, num_workers=0, pin_memory=True
+        val_ds, batch_size=1, shuffle=False, num_workers=4, pin_memory=True
     )
 
-    return local_train_loader, val_loader
+    return train_loader, val_loader
 
 
-def load_test_data(test_folder, batch_size=1):
+def load_test_data(json_path, basedir, batch_size=1):
     """
     Load all test files from a specified test folder and apply transformations.
     """
     # List all cases in the test folder
-    test_cases = [f for f in os.listdir(test_folder) if f.startswith("BraTS2021")]
+    with open(json_path, 'r') as f:
+        json_data = json.load(f)
 
     test_files = []
-    for case_num in test_cases:
-        test_files.append(
-            {
-                "image": [
-                    os.path.join(test_folder, case_num, f"{case_num}_flair.nii.gz"),
-                    os.path.join(test_folder, case_num, f"{case_num}_t1ce.nii.gz"),
-                    os.path.join(test_folder, case_num, f"{case_num}_t1.nii.gz"),
-                    os.path.join(test_folder, case_num, f"{case_num}_t2.nii.gz"),
-                ],
-                "label": os.path.join(test_folder, case_num, f"{case_num}_seg.nii.gz"),
-                "path": case_num,
-            }
-        )
+    for entry in json_data['test']:
+        entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
+        entry['label'] = os.path.join(basedir, entry['label'])
+        test_files.append(entry)
 
     # Get the test transforms
     test_transform = get_test_transforms()

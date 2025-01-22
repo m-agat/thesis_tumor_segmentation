@@ -34,6 +34,14 @@ for idx, case_folder in enumerate(os.listdir(input_dir)):
             # Replace label 4 (Enhancing Tumor) with label 3
             seg_data[seg_data == 4] = 3
 
+            # Normalize floating-point imprecision
+            seg_data = np.round(seg_data).astype(int)
+
+            # Validate unique values
+            unique_values = np.unique(seg_data)
+            if not np.array_equal(unique_values, [0, 1, 2, 3]):
+                print(f"Warning: Unexpected labels {unique_values} found in {filename}")
+
             # Save the modified segmentation file
             output_seg_file = os.path.join(output_case_folder, filename)
             modified_seg = nib.Nifti1Image(seg_data, seg_image.affine, seg_image.header)

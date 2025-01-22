@@ -8,7 +8,7 @@ swinunetr_model = SwinUNETR(
     feature_size=48,
     drop_rate=0.2,
     attn_drop_rate=0.2,
-    dropout_path_rate=0.15,
+    dropout_path_rate=0.2,
     use_checkpoint=True,
 ).to(config.device)
 
@@ -34,8 +34,8 @@ vnet_model = VNet(
     spatial_dims=3,
     in_channels=4,
     out_channels=4,  
-    dropout_prob_down=0.3,
-    dropout_prob_up=(0.3, 0.2),
+    dropout_prob_down=0.2,
+    dropout_prob_up=(0.2, 0.2),
     dropout_dim=3,
     act=("elu", {"inplace": True}),
 ).to(config.device)
