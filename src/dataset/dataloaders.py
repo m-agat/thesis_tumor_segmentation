@@ -63,10 +63,10 @@ def get_loaders(batch_size, json_path, basedir, fold, roi):
 
     # Create data loaders
     train_loader = data.DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True
+        train_ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True
     )
     val_loader = data.DataLoader(
-        val_ds, batch_size=1, shuffle=False, num_workers=8, pin_memory=True
+        val_ds, batch_size=1, shuffle=False, num_workers=4, pin_memory=True
     )
 
     return train_loader, val_loader
