@@ -59,7 +59,7 @@ def cross_validate_trainer(
         optimizer_name = optimizer.__class__.__name__
 
         # Create a new log directory for each fold
-        fold_log_dir = f"./outputs/runs/{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_fold_{fold + 1}"
+        fold_log_dir = os.path.join(config.output_dir, f"runs/{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_fold_{fold + 1}")
         os.makedirs(fold_log_dir, exist_ok=True)
         writer = SummaryWriter(log_dir=fold_log_dir)  # Separate writer for each fold
 
