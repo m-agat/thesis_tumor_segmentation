@@ -4,6 +4,7 @@ import os
 import numpy as np 
 import sys
 from torch.cuda.amp import autocast, GradScaler
+from scipy.ndimage import center_of_mass
 
 # Custom modules
 sys.path.append("../")
@@ -139,6 +140,33 @@ def val_epoch(
 
             # Update HD95 meter for all subregions
             hd95 = hd95.squeeze(0).cpu().numpy()  
+            for i in range(len(hd95)):
+                if not_nans[i] == 0:  # Tissue is absent
+                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+
+                    # Compute Center of Mass for the predicted mask
+                    pred_array = torch.stack(val_output_convert)[:, i].cpu().numpy()  # Convert to NumPy
+                    com = center_of_mass(pred_array)
+
+                    com_mask = np.zeros_like(pred_array, dtype=np.uint8)
+                    com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                    com_mask[com_coords] = 1
+
+                    # Convert CoM mask back to tensor
+                    com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+
+                    # Compute Hausdorff Distance between prediction and CoM mask
+                    mock_val = compute_hausdorff_distance(
+                        y_pred=torch.stack(val_output_convert)[:, i].unsqueeze(0),
+                        y=com_mask_tensor.unsqueeze(0),
+                        include_background=False,
+                        distance_metric="euclidean",
+                        percentile=95
+                    )
+
+                    print(f"Mock HD95 for region {i}:", mock_val.item())
+                    hd95[i] = mock_val.item() if not pred_empty else 0.0
+            
             run_hd95_meter.update(hd95, n=config.batch_size)
 
             # Compute Sensitivity and Specificity
