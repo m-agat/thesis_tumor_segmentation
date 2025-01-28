@@ -141,32 +141,64 @@ def val_epoch(
             # Update HD95 meter for all subregions
             hd95 = hd95.squeeze(0).cpu().numpy()  
             for i in range(len(hd95)):
-                if not_nans[i] == 0:  # Tissue is absent
+                if not_nans[i] == 0:  # Tissue is absent in ground truth
                     pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
 
-                    # Compute Center of Mass for the predicted mask
-                    pred_array = torch.stack(val_output_convert)[:, i].cpu().numpy()  # Convert to NumPy
-                    com = center_of_mass(pred_array)
+                    if not pred_empty:  # Prediction contains tissue but GT doesn't
+                        pred_array = torch.stack(val_output_convert)[:, i].cpu().numpy()  # Convert to NumPy
+                        if np.sum(pred_array) > 0:
+                            # Compute Center of Mass for the predicted mask
+                            com = center_of_mass(pred_array)
+                            com_mask = np.zeros_like(pred_array, dtype=np.uint8)
+                            com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                            com_mask[com_coords] = 1
 
-                    com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                    com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
-                    com_mask[com_coords] = 1
+                            # Convert CoM mask back to tensor
+                            com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                    # Convert CoM mask back to tensor
-                    com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                            # Compute Hausdorff Distance between prediction and CoM mask
+                            mock_val = compute_hausdorff_distance(
+                                y_pred=torch.stack(val_output_convert)[:, i].unsqueeze(0),
+                                y=com_mask_tensor.unsqueeze(0),
+                                include_background=False,
+                                distance_metric="euclidean",
+                                percentile=95
+                            )
 
-                    # Compute Hausdorff Distance between prediction and CoM mask
-                    mock_val = compute_hausdorff_distance(
-                        y_pred=torch.stack(val_output_convert)[:, i].unsqueeze(0),
-                        y=com_mask_tensor.unsqueeze(0),
-                        include_background=False,
-                        distance_metric="euclidean",
-                        percentile=95
-                    )
+                            print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
+                            hd95[i] = mock_val.item()
+                    else:
+                        # No prediction or GT; HD95 = 0
+                        hd95[i] = 0.0
 
-                    print(f"Mock HD95 for region {i}:", mock_val.item())
-                    hd95[i] = mock_val.item() if not pred_empty else 0.0
-            
+                elif torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0:  # Model predicts tissue is absent
+                    if not_nans[i] != 0:  # But GT contains tissue
+                        gt_array = torch.stack(val_labels_list)[:, i].cpu().numpy()
+                        if np.sum(gt_array) > 0:
+                            # Compute Center of Mass for the GT mask
+                            com = center_of_mass(gt_array)
+                            com_mask = np.zeros_like(gt_array, dtype=np.uint8)
+                            com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                            com_mask[com_coords] = 1
+
+                            # Convert CoM mask back to tensor
+                            com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+
+                            # Compute Hausdorff Distance between GT CoM and empty prediction
+                            mock_val = compute_hausdorff_distance(
+                                y_pred=torch.stack(val_labels_list)[:, i].unsqueeze(0),
+                                y=com_mask_tensor.unsqueeze(0),
+                                include_background=False,
+                                distance_metric="euclidean",
+                                percentile=95
+                            )
+
+                            print(f"Mock HD95 for region {i} (Prediction absent):", mock_val.item())
+                            hd95[i] = mock_val.item()
+                        else:
+                            print(f"Warning: GT mask for region {i} is unexpectedly empty.")
+                            hd95[i] = 0.0
+
             run_hd95_meter.update(hd95, n=config.batch_size)
 
             # Compute Sensitivity and Specificity
