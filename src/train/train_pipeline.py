@@ -77,12 +77,6 @@ def val_epoch(
     initial_lr=None,
     weight_decay_value=None
 ):
-    fold_dir = os.path.join(
-        config.output_dir,
-        f"fold_{fold + 1}_results_{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}"
-    )
-    os.makedirs(fold_dir, exist_ok=True)
-
     model.eval()
     start_time = time.time()
     run_acc = AverageMeter()
@@ -216,25 +210,6 @@ def val_epoch(
                     specificity[i] = 1.0
             run_sensitivity.update(sensitivity, n=config.batch_size)
             run_specificity.update(specificity, n=config.batch_size)
-
-            if epoch == config.max_epochs - 1:
-                # Get probabilities
-                probs = np.stack(
-                    [post_activation(val_pred_tensor).cpu().numpy() for val_pred_tensor in val_outputs_list]
-                )
-
-                # Get ground truth class labels
-                y_true_class = torch.argmax(torch.stack(val_labels_list), dim=1).cpu().numpy().flatten()
-
-                # Get predicted class labels
-                y_pred_class = torch.argmax(torch.stack(val_output_convert), dim=1).cpu().numpy().flatten()
-
-                # Save files
-                np.savez_compressed(os.path.join(fold_dir, f"probs_batch_{idx}.npz"), probs)
-                np.savez_compressed(os.path.join(fold_dir, f"true_labels_batch_{idx}.npz"), y_true_class)
-                np.savez_compressed(os.path.join(fold_dir, f"pred_labels_batch_{idx}.npz"), y_pred_class)
-
-                del probs, y_true_class, y_pred_class
 
             # Get metrics per subregion
             dice_ncr, dice_ed, dice_et = run_acc.avg
