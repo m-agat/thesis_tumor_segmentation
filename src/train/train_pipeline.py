@@ -27,14 +27,27 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
         )
 
         # Zero the gradients before the forward pass
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
         # Mixed precision: use autocast for forward pass and loss computation
         with autocast():
             logits = model(data)
             loss = loss_func(logits, target)
 
+        if torch.isnan(loss) or torch.isinf(loss):
+            print("NaN detected in loss. Skipping step.")
+            continue
+        
+        # backpropagation
         scaler.scale(loss).backward()
+
+        # Unscale the gradients for clipping
+        scaler.unscale_(optimizer)
+
+        # Clip gradients to prevent explosion
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        # Step the optimizer 
         scaler.step(optimizer)
         scaler.update()
 
@@ -56,7 +69,6 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
     if writer:
         writer.add_scalar(f"Fold_{fold + 1}/Loss/Train_Epoch", run_loss.avg, epoch)
 
-    del data, target, logits
     torch.cuda.empty_cache()
 
     return run_loss.avg
@@ -306,6 +318,10 @@ def trainer(
             fold=fold
         )
 
+        if torch.isnan(torch.tensor(train_loss)):  # New check
+            print("NaN detected in training loss. Stopping training.")
+            break
+
         # Log learning rate
         current_lr = optimizer.param_groups[0]['lr']
         if writer:
@@ -380,14 +396,17 @@ def trainer(
                 val_loss_min = val_loss
                 save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_bestloss_fold_{fold + 1}.pt")
 
-            scheduler.step()
-
             # Check for early stopping
             if early_stopper is not None and epoch > 10: # trigger only after at least 10 epochs of training
                 early_stopper(val_avg_acc, model, epoch, val_acc_max)
                 if early_stopper.early_stop:
                     print("Early stopping triggered. Stopping training.")
                     break
+
+            try:
+                scheduler.step()
+            except Exception as e:
+                print(f"Scheduler update failed: {e}")
     
     metrics_history["dice"] = np.nanmean([
         np.nanmean(metrics_history["dice_ncr"]),

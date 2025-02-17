@@ -48,18 +48,12 @@ def scheduler_func(optimizer):
 post_activation = Activations(softmax=True) # Softmax for multi-class output
 post_pred = AsDiscrete(argmax=True, to_onehot=4) # get the class with the highest prob for each channel
 
-# Hyperparmeter tuning 
-hyperparameter_space = {
-    "learning_rate": [1e-4, 3e-4, 5e-4, 1e-3],
-    "optimizer": ["AdamW", "SGD"],
-    "weight_decay": [1e-5, 1e-4],
-}
-
-configs = random.sample(list(itertools.product(
-    hyperparameter_space["learning_rate"],
-    hyperparameter_space["optimizer"],
-    hyperparameter_space["weight_decay"]
-)), 10)
+configs = [
+    (1e-4, "AdamW", 1e-5),  # Configuration A (Baseline as per MONAI tutorial)
+    (1e-4, "AdamW", 1e-4),  # Configuration B (Same LR with increased weight decay)
+    (1e-3, "SGD", 1e-5),     # Configuration C (Using SGD with a higher LR, lower weight decay)
+    (1e-3, "SGD", 1e-4)      # Configuration D (Using SGD with a higher LR and increased weight decay)
+]
 
 # Store results for each configuration
 tuning_results = []
