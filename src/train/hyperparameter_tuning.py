@@ -71,7 +71,7 @@ for idx, (lr, opt, wd) in enumerate(configs):
         
     # Perform cross-validation for this configuration
     fold_results, avg_metrics = cross_validate_trainer(
-        model_class=lambda: models.models_dict[f"{config.model_name}_model.pt"],
+        model_class=models.models_dict[f"{config.model_name}_model.pt"],
         optimizer_func=optimizer_func,
         loss_func=loss_func,
         acc_func=dice_acc,
@@ -97,7 +97,7 @@ tuning_results.sort(key=lambda x: x["avg_dice"], reverse=True)
 tuning_results = convert_to_serializable(tuning_results)
 
 # Save tuning results to JSON
-tuning_results_path = os.path.join(config.output_dir, "hyperparameter_tuning_results.json")
+tuning_results_path = os.path.join(config.output_dir, f"{config.model_name}_hyperparameter_tuning_results.json")
 with open(tuning_results_path, "w") as f:
     json.dump(tuning_results, f, indent=4)
 
