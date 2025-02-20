@@ -27,6 +27,7 @@ figures/
 *.pkl
 *.zip
 *.tar.gz
+*.tar
 
 # C extensions
 *.so
