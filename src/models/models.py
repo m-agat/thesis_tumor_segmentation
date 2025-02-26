@@ -48,6 +48,14 @@ models_dict = {
     "vnet_model.pt": lambda: VNet(spatial_dims=3, in_channels=4, out_channels=4, dropout_prob_down=0.2, dropout_prob_up=(0.2, 0.2), dropout_dim=3, act=("elu", {"inplace": True})),
 }
 
+final_models_dict = {
+    "swinunetr_model.pt": swinunetr_model,
+    "segresnet_model.pt": segresnet_model,
+    "attunet_model.pt": attunet_model,
+    "vnet_model.pt": vnet_model,
+}
+
+
 # Function to retrieve model name
 def get_model_name(models_dict, model_instance):
     for key, value in models_dict.items():

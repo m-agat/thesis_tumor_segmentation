@@ -15,9 +15,11 @@ def get_subset(dataset, fraction, seed):
     indices = np.random.choice(len(dataset), subset_size, replace=False)  # Random subset
     return Subset(dataset, indices)
 
-def load_folds_data(json_path, basedir, fold):
+def load_folds_data(json_path, basedir, fold=None, use_final_split=False):
     """
     Load training and validation data for a specific fold from the JSON file.
+
+    Can be used for both CV and final training. 
 
     Args:
         json_path (str): Path to the JSON file containing data splits.
@@ -31,42 +33,55 @@ def load_folds_data(json_path, basedir, fold):
         data = json.load(f)
 
     training_files = []
-    for entry in data['training']:
-        if entry.get('fold') == fold:  
+    validation_files = []
+
+    if use_final_split:
+        for entry in data['training']:
             entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
             entry['label'] = os.path.join(basedir, entry['label'])
             training_files.append(entry)
 
-    validation_files = []
-    for entry in data['validation']:
-        if entry.get('fold') == fold:  
+        for entry in data['validation']:
             entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
             entry['label'] = os.path.join(basedir, entry['label'])
             validation_files.append(entry)
+    else:
+        for entry in data['training']:
+            if entry.get('fold') == fold:  
+                entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
+                entry['label'] = os.path.join(basedir, entry['label'])
+                training_files.append(entry)
+
+        
+        for entry in data['validation']:
+            if entry.get('fold') == fold:  
+                entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
+                entry['label'] = os.path.join(basedir, entry['label'])
+                validation_files.append(entry)
 
     return training_files, validation_files
 
-def get_loaders(batch_size, json_path, basedir, fold, roi):
+def get_loaders(batch_size, json_path, basedir, fold=None, roi=None, use_final_split=False):
     """
     Create data loaders for the second stage, focusing on multi-class segmentation.
     """
     # Load train and validation files
-    train_files, val_files = load_folds_data(json_path=json_path, basedir=basedir, fold=fold)
+    train_files, val_files = load_folds_data(json_path=json_path, basedir=basedir, fold=fold, use_final_split=use_final_split)
 
-    # Get the global and local transforms for multi-class segmentation
+    # Get the transforms for multi-class segmentation
     train_transform = get_train_transforms(roi)
     val_transform = get_val_transforms()
 
-    # Create datasets with global and local patches
+    # Create datasets with patches
     train_ds = data.Dataset(data=train_files, transform=train_transform)
     val_ds = data.Dataset(data=val_files, transform=val_transform)
 
     # Create data loaders
     train_loader = data.DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True
+        train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True
     )
     val_loader = data.DataLoader(
-        val_ds, batch_size=1, shuffle=False, num_workers=4, pin_memory=True
+        val_ds, batch_size=1, shuffle=False, num_workers=2, pin_memory=True
     )
 
     return train_loader, val_loader

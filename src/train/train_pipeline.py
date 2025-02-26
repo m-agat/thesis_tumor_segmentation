@@ -16,7 +16,7 @@ from monai.data import decollate_batch
 from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
 
 
-def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None, fold=0):
+def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None, fold=0, use_folds=True):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -54,8 +54,10 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
         run_loss.update(loss.item(), n=config.batch_size)
 
         if writer and idx % 10 == 0:
-            # Log batch-wise training loss
-            writer.add_scalar(f"Fold_{fold + 1}/Batch_Loss/Train", loss.item(), epoch * len(loader) + idx)
+            if use_folds:
+                writer.add_scalar(f"Fold_{fold + 1}/Batch_Loss/Train", loss.item(), epoch * len(loader) + idx)
+            else:
+                writer.add_scalar(f"Final_Train_Loss/Batch", loss.item(), epoch * len(loader) + idx)
 
         print(
             f"Epoch {epoch}/{config.max_epochs} {idx}/{len(loader)}",
@@ -67,7 +69,10 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
 
     # Log average training loss for the epoch
     if writer:
-        writer.add_scalar(f"Fold_{fold + 1}/Loss/Train_Epoch", run_loss.avg, epoch)
+        if use_folds:
+            writer.add_scalar(f"Fold_{fold + 1}/Loss/Train_Epoch", run_loss.avg, epoch)
+        else:
+            writer.add_scalar(f"Final_Train_Loss/Epoch", run_loss.avg, epoch)
 
     torch.cuda.empty_cache()
 
@@ -84,10 +89,8 @@ def val_epoch(
     post_activation=None,
     post_pred=None,
     writer=None,
-    fold=0,
-    optimizer_name=None,
-    initial_lr=None,
-    weight_decay_value=None
+    fold=0, 
+    use_folds=True
 ):
     model.eval()
     start_time = time.time()
@@ -110,6 +113,7 @@ def val_epoch(
             data, target = batch_data["image"].to(config.device), batch_data[
                 "label"
             ].to(config.device)
+
             logits = model_inferer(data)
 
             # Compute validation loss
@@ -144,66 +148,75 @@ def val_epoch(
                 percentile=95  # For HD95
             )
 
+            
+
             # Update HD95 meter for all subregions
             hd95 = hd95.squeeze(0).cpu().numpy()  
             for i in range(len(hd95)):
-                if not_nans[i] == 0:  # Tissue is absent in ground truth
-                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                gt_empty = not_nans[i] == 0
 
-                    if not pred_empty:  # Prediction contains tissue but GT doesn't
-                        pred_array = torch.stack(val_output_convert)[:, i].cpu().numpy()  # Convert to NumPy
-                        if np.sum(pred_array) > 0:
-                            # Compute Center of Mass for the predicted mask
-                            com = center_of_mass(pred_array)
-                            com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                            com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
-                            com_mask[com_coords] = 1
+                if pred_empty and gt_empty:
+                    print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
+                    hd95[i] = 0.0
+                    
+                elif gt_empty and not pred_empty:  # Tissue is absent in ground truth
+                    pred_array = torch.stack(val_output_convert)[:, i].cpu().numpy()  # Convert to NumPy
+                    if np.sum(pred_array) > 0:
+                        # Compute Center of Mass for the predicted mask
+                        com = center_of_mass(pred_array)
+                        com_mask = np.zeros_like(pred_array, dtype=np.uint8)
+                        com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                        com_mask[com_coords] = 1
 
-                            # Convert CoM mask back to tensor
-                            com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                        # Convert CoM mask back to tensor
+                        com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                            # Compute Hausdorff Distance between prediction and CoM mask
-                            mock_val = compute_hausdorff_distance(
-                                y_pred=torch.stack(val_output_convert)[:, i].unsqueeze(0),
-                                y=com_mask_tensor.unsqueeze(0),
-                                include_background=False,
-                                distance_metric="euclidean",
-                                percentile=95
-                            )
+                        # Compute Hausdorff Distance between prediction and CoM mask
+                        mock_val = compute_hausdorff_distance(
+                            y_pred=torch.stack(val_output_convert)[:, i].unsqueeze(0),
+                            y=com_mask_tensor.unsqueeze(0),
+                            include_background=False,
+                            distance_metric="euclidean",
+                            percentile=95
+                        )
 
-                            print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
-                            hd95[i] = mock_val.item()
+                        print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
+                        print(f"Before update, hd95: {hd95}")
+                        hd95[i] = mock_val.item()
+                        print(f"After update, hd95: {hd95}")
                     else:
                         # No prediction or GT; HD95 = 0
                         hd95[i] = 0.0
 
-                elif torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0:  # Model predicts tissue is absent
-                    if not_nans[i] != 0:  # But GT contains tissue
-                        gt_array = torch.stack(val_labels_list)[:, i].cpu().numpy()
-                        if np.sum(gt_array) > 0:
-                            # Compute Center of Mass for the GT mask
-                            com = center_of_mass(gt_array)
-                            com_mask = np.zeros_like(gt_array, dtype=np.uint8)
-                            com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
-                            com_mask[com_coords] = 1
+                elif pred_empty and not gt_empty:  # Model predicts tissue is absent
+                    gt_array = torch.stack(val_labels_list)[:, i].cpu().numpy()
+                    if np.sum(gt_array) > 0:
+                        # Compute Center of Mass for the GT mask
+                        com = center_of_mass(gt_array)
+                        com_mask = np.zeros_like(gt_array, dtype=np.uint8)
+                        com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                        com_mask[com_coords] = 1
 
-                            # Convert CoM mask back to tensor
-                            com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                        # Convert CoM mask back to tensor
+                        com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                            # Compute Hausdorff Distance between GT CoM and empty prediction
-                            mock_val = compute_hausdorff_distance(
-                                y_pred=torch.stack(val_labels_list)[:, i].unsqueeze(0),
-                                y=com_mask_tensor.unsqueeze(0),
-                                include_background=False,
-                                distance_metric="euclidean",
-                                percentile=95
-                            )
+                        # Compute Hausdorff Distance between GT CoM and empty prediction
+                        mock_val = compute_hausdorff_distance(
+                            y_pred=torch.stack(val_labels_list)[:, i].unsqueeze(0),
+                            y=com_mask_tensor.unsqueeze(0),
+                            include_background=False,
+                            distance_metric="euclidean",
+                            percentile=95
+                        )
 
-                            print(f"Mock HD95 for region {i} (Prediction absent):", mock_val.item())
-                            hd95[i] = mock_val.item()
-                        else:
-                            print(f"Warning: GT mask for region {i} is unexpectedly empty.")
-                            hd95[i] = 0.0
+                        print(f"Mock HD95 for region {i} (Prediction absent):", mock_val.item())
+                        print(f"Before update, hd95: {hd95}")
+                        hd95[i] = mock_val.item()
+                        print(f"After update, hd95: {hd95}")
+                    else:
+                        print(f"Warning: GT mask for region {i} is unexpectedly empty.")
+                        hd95[i] = 0.0
 
             run_hd95_meter.update(hd95, n=config.batch_size)
 
@@ -243,19 +256,34 @@ def val_epoch(
 
     # Log average validation loss and Dice scores for the epoch
     if writer:
-        writer.add_scalar(f"Fold_{fold + 1}/Loss/Validation_Epoch", run_loss.avg, epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_NCR", run_acc.avg[0], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ED", run_acc.avg[1], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ET", run_acc.avg[2], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_NCR", run_hd95_meter.avg[0], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_ED", run_hd95_meter.avg[1], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_ET", run_hd95_meter.avg[2], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_NCR", run_sensitivity.avg[0], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_ED", run_sensitivity.avg[1], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_ET", run_sensitivity.avg[2], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_NCR", run_specificity.avg[0], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ED", run_specificity.avg[1], epoch)
-        writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ET", run_specificity.avg[2], epoch)
+        if use_folds:
+            writer.add_scalar(f"Fold_{fold + 1}/Loss/Validation_Epoch", run_loss.avg, epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_NCR", run_acc.avg[0], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ED", run_acc.avg[1], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ET", run_acc.avg[2], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_NCR", run_hd95_meter.avg[0], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_ED", run_hd95_meter.avg[1], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_ET", run_hd95_meter.avg[2], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_NCR", run_sensitivity.avg[0], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_ED", run_sensitivity.avg[1], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_ET", run_sensitivity.avg[2], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_NCR", run_specificity.avg[0], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ED", run_specificity.avg[1], epoch)
+            writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ET", run_specificity.avg[2], epoch)
+        else:
+            writer.add_scalar("Final_Train_Loss/Validation_Epoch", run_loss.avg, epoch)
+            writer.add_scalar("Final_Train_Dice/Validation_NCR", run_acc.avg[0], epoch)
+            writer.add_scalar("Final_Train_Dice/Validation_ED", run_acc.avg[1], epoch)
+            writer.add_scalar("Final_Train_Dice/Validation_ET", run_acc.avg[2], epoch)
+            writer.add_scalar("Final_Train_HD95/Validation_NCR", run_hd95_meter.avg[0], epoch)
+            writer.add_scalar("Final_Train_HD95/Validation_ED", run_hd95_meter.avg[1], epoch)
+            writer.add_scalar("Final_Train_HD95/Validation_ET", run_hd95_meter.avg[2], epoch)
+            writer.add_scalar("Final_Train_Sensitivity/Validation_NCR", run_sensitivity.avg[0], epoch)
+            writer.add_scalar("Final_Train_Sensitivity/Validation_ED", run_sensitivity.avg[1], epoch)
+            writer.add_scalar("Final_Train_Sensitivity/Validation_ET", run_sensitivity.avg[2], epoch)
+            writer.add_scalar("Final_Train_Specificity/Validation_NCR", run_specificity.avg[0], epoch)
+            writer.add_scalar("Final_Train_Specificity/Validation_ED", run_specificity.avg[1], epoch)
+            writer.add_scalar("Final_Train_Specificity/Validation_ET", run_specificity.avg[2], epoch)
 
     return run_acc.avg, run_loss.avg, run_hd95_meter.avg, \
             run_sensitivity.avg, run_specificity.avg 
@@ -273,6 +301,7 @@ def trainer(
     post_activation=None,
     post_pred=None,
     early_stopper=None,
+    use_folds=True,
     fold=0,
     writer=None,
 ):
@@ -302,6 +331,8 @@ def trainer(
     weight_decay_value = optimizer.param_groups[0]['weight_decay']
     optimizer_name = optimizer.__class__.__name__
 
+    model_suffix = f"_fold_{fold+1}_{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}" if use_folds else f"_{config.model_name}_final"
+
     for epoch in range(start_epoch, config.max_epochs):
         print(time.ctime(), "Epoch:", epoch)
         epoch_time = time.time()
@@ -315,7 +346,8 @@ def trainer(
             epoch=epoch,
             loss_func=loss_func,
             writer=writer,
-            fold=fold
+            fold=fold,
+            use_folds=use_folds
         )
 
         if torch.isnan(torch.tensor(train_loss)):  # New check
@@ -325,7 +357,7 @@ def trainer(
         # Log learning rate
         current_lr = optimizer.param_groups[0]['lr']
         if writer:
-            writer.add_scalar(f"Fold_{fold + 1}/LearningRate", current_lr, epoch)
+            writer.add_scalar(f"Training/LearningRate{model_suffix}", current_lr, epoch)
 
         print(
             "Final training  {}/{}".format(epoch, config.max_epochs - 1),
@@ -350,9 +382,7 @@ def trainer(
                 post_pred=post_pred,
                 writer=writer,
                 fold=fold,
-                optimizer_name=optimizer_name,
-                initial_lr=initial_lr,
-                weight_decay_value=weight_decay_value
+                use_folds=use_folds
             )
 
             dice_ncr, dice_ed, dice_et = val_acc
@@ -389,12 +419,12 @@ def trainer(
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
-                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_best_acc_fold_{fold + 1}.pt")
+                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"best_acc{model_suffix}.pt")
 
             if val_loss < val_loss_min:
                 print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
                 val_loss_min = val_loss
-                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}_bestloss_fold_{fold + 1}.pt")
+                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"bestloss{model_suffix}.pt")
 
             # Check for early stopping
             if early_stopper is not None and epoch > 10: # trigger only after at least 10 epochs of training
