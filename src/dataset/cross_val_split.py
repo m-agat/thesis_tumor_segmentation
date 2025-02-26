@@ -30,7 +30,7 @@ for region, group in region_groups:
         test_samples.append(group.sample(1, random_state=42))
         remaining_data.append(group.drop(test_samples[-1].index))
     elif region == '1-1-1':  # Most common combination
-        # Allocate 80% to train/val and 20% to test
+        # Allocate 80% to train/val and 15% to test
         common_train, common_test = train_test_split(
             group,
             test_size=0.15,
