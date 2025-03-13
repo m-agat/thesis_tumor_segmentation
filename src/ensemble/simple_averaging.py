@@ -14,19 +14,19 @@ import models.models as models
 import config.config as config
 
 #####################
-#### Load models ####
+#### Load Models ####
 #####################
-
 
 def load_model(model_class, checkpoint_path, device):
     """
-    Load the model from a checkpoint path.
+    Load a segmentation model from a checkpoint.
     """
     model = model_class
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     model.eval()
+    
     return model, partial(
         sliding_window_inference,
         roi_size=config.roi,
@@ -35,108 +35,111 @@ def load_model(model_class, checkpoint_path, device):
         overlap=config.infer_overlap,
     )
 
+def load_all_models():
+    """
+    Load all segmentation models into a dictionary.
+    """
+    return {
+        "swinunetr": load_model(models.swinunetr_model, config.model_paths["swinunetr"], config.device),
+        "segresnet": load_model(models.segresnet_model, config.model_paths["segresnet"], config.device),
+        "attunet": load_model(models.attunet_model, config.model_paths["attunet"], config.device),
+        "vnet": load_model(models.vnet_model, config.model_paths["vnet"], config.device),
+    }
 
-def save_segmentation_as_nifti(
-    predicted_segmentation, reference_image_path, output_path
-):
+#############################
+#### Save Segmentation ######
+#############################
+
+def save_segmentation_as_nifti(predicted_segmentation, reference_image_path, output_path):
     """
     Save the predicted segmentation as a NIfTI file.
 
     Parameters:
     - predicted_segmentation: The segmentation output as a tensor or numpy array.
-    - reference_image_path: Path to the reference NIfTI image (to copy affine and header).
+    - reference_image_path: Path to the reference NIfTI image (for affine and header copying).
     - output_path: Path where the new segmentation NIfTI file will be saved.
     """
-    # Convert to NumPy array if it's a tensor
     if isinstance(predicted_segmentation, torch.Tensor):
         predicted_segmentation = predicted_segmentation.cpu().numpy()
 
-    # Ensure correct data type
-    predicted_segmentation = predicted_segmentation.astype(np.uint8)  # or np.int16
+    predicted_segmentation = predicted_segmentation.astype(np.uint8)
 
-    # Load reference image to get affine and header
     ref_img = nib.load(reference_image_path)
-
-    # Create a new NIfTI image with the segmentation
-    seg_img = nib.Nifti1Image(
-        predicted_segmentation, affine=ref_img.affine, header=ref_img.header
-    )
-
-    # Save as .nii.gz file
+    seg_img = nib.Nifti1Image(predicted_segmentation, affine=ref_img.affine, header=ref_img.header)
     nib.save(seg_img, output_path)
 
     print(f"Segmentation saved to {output_path}")
 
-
-# Load multiple models
-models_dict = {
-    "swinunetr": load_model(
-        models.swinunetr_model, config.model_paths["swinunetr"], config.device
-    ),
-    "segresnet": load_model(
-        models.segresnet_model, config.model_paths["segresnet"], config.device
-    ),
-    "attunet": load_model(
-        models.attunet_model, config.model_paths["attunet"], config.device
-    ),
-    "vnet": load_model(models.vnet_model, config.model_paths["vnet"], config.device),
-}
-
-# Post-processing transforms
-post_activation = Activations(softmax=True)  # Softmax for multi-class output
-post_pred = AsDiscrete(argmax=True, to_onehot=4)  # Convert to one-hot encoding
-
-output_dir = "./output_segmentations"
-os.makedirs(output_dir, exist_ok=True)
-
 ########################################
-#### Perform ensemble inference ####
+#### Perform Ensemble Segmentation ####
 ########################################
 
-patient_id = "01556"
-one_patient = config.find_patient_by_id(patient_id, config.test_loader)
+def ensemble_segmentation(patient_id, test_loader, models_dict, output_dir="./output_segmentations"):
+    """
+    Perform segmentation using an ensemble of multiple models with simple averaging.
 
-with torch.no_grad():
-    for idx, batch_data in enumerate(one_patient):
-        image = batch_data["image"].to(config.device)
-        patient_path = batch_data["path"]
-        ground_truth = batch_data["label"][0].cpu().numpy()
+    Parameters:
+    - patient_id: ID of the patient whose scan is being segmented.
+    - test_loader: Dataloader for the test set.
+    - models_dict: Dictionary containing trained models and their inferers.
+    - output_dir: Directory where segmentations will be saved.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    one_patient = config.find_patient_by_id(patient_id, test_loader)
 
-        # Collect logits from each model
-        logits_list = []
-        for model_name, (model, inferer) in models_dict.items():
-            logits = inferer(image)
-            print("logits shape: ", logits.shape)
-            logits_list.append(logits)
+    post_activation = Activations(softmax=True)  # Convert logits to probabilities
+    post_pred = AsDiscrete(argmax=True)  # Get the most probable class per voxel
 
-        # # Average the logits across all models
-        logits_tensor = torch.stack(
-            logits_list, dim=0
-        )  # Shape: (num_models, 4, 240, 240, 155)
-        avg_logits = torch.mean(logits_tensor, dim=0)  # Shape: (4, 240, 240, 155)
+    with torch.no_grad():
+        for batch_data in one_patient:
+            image = batch_data["image"].to(config.device)
+            reference_image_path = batch_data["path"][0]  # Assuming first path is the reference
 
-        val_outputs_list = list(torch.unbind(avg_logits, dim=0))
-        val_output_convert = [
-            post_pred(post_activation(val_pred_tensor))
-            for val_pred_tensor in val_outputs_list
-        ]
+            # Collect logits from each model
+            logits_list = []
+            for model_name, (model, inferer) in models_dict.items():
+                logits = inferer(image).squeeze(0)  # Remove batch dim -> (num_classes, H, W, D)
+                logits_list.append(logits)
 
-        seg = val_output_convert[0]
-        if hasattr(seg, "cpu"):
-            seg = seg.cpu().numpy()
+            # Average the logits across all models
+            avg_logits = torch.mean(torch.stack(logits_list), dim=0)  # Shape: (num_classes, H, W, D)
 
-        if seg.ndim == 4:
-            seg = seg.argmax(axis=0)
+            # Apply softmax and convert to segmentation map
+            seg = torch.nn.functional.softmax(avg_logits, dim=0).argmax(dim=0).cpu().numpy()  # Shape: (H, W, D)
 
-        output_path = os.path.join(output_dir, f"segmentation_{patient_id}.nii.gz")
-        reference_image_path = patient_path[0]
-        save_segmentation_as_nifti(seg, reference_image_path, output_path)
+            # Save segmentation
+            output_path = os.path.join(output_dir, f"segmentation_{patient_id}.nii.gz")
+            save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
-        print("Updated segmentation shape:", seg.shape)
+            # Display a middle slice
+            visualize_segmentation(seg, patient_id)
 
-        slice_index = seg.shape[-1] // 2
-        plt.figure(figsize=(6, 6))
-        plt.imshow(seg[:, :, slice_index], cmap="gray")
-        plt.title(f"Segmentation Slice at Index {slice_index}")
-        plt.axis("off")
-        plt.savefig("ensemble_map.png")
+####################################
+#### Visualize Segmentation ####
+####################################
+
+def visualize_segmentation(segmentation, patient_id):
+    """
+    Display and save a middle slice from the segmentation.
+
+    Parameters:
+    - segmentation: 3D NumPy array containing the segmentation result.
+    - patient_id: ID of the patient (used for file naming).
+    """
+    slice_index = segmentation.shape[-1] // 2  # Middle slice
+
+    plt.figure(figsize=(6, 6))
+    plt.imshow(segmentation[:, :, slice_index], cmap="gray")
+    plt.title(f"Segmentation Slice at Index {slice_index}")
+    plt.axis("off")
+    plt.savefig(f"segmentation_{patient_id}_slice.png")
+    plt.show()
+
+#######################
+#### Run Inference ####
+#######################
+
+if __name__ == "__main__":
+    patient_id = "01556"
+    models_dict = load_all_models()
+    ensemble_segmentation(patient_id, config.test_loader, models_dict)
