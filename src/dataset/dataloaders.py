@@ -99,6 +99,7 @@ def load_test_data(json_path, basedir, batch_size=1):
     for entry in json_data['test']:
         entry['image'] = [os.path.join(basedir, path) for path in entry['image']]
         entry['label'] = os.path.join(basedir, entry['label'])
+        entry['path'] = entry['label']
         test_files.append(entry)
 
     # Get the test transforms
