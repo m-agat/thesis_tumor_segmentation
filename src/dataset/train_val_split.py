@@ -35,14 +35,16 @@ print(f"Rare Classes: {rare_classes}")
 
 # Ensure all rare samples go to training set
 rare_samples = train_val_df[train_val_df["Region Combination"].isin(rare_classes)]
-train_val_df = train_val_df[~train_val_df["Region Combination"].isin(rare_classes)]  # Remove from main set
+train_val_df = train_val_df[
+    ~train_val_df["Region Combination"].isin(rare_classes)
+]  # Remove from main set
 
 # Perform stratified split only on non-rare samples
 train_patients, val_patients = train_test_split(
     train_val_df,
     test_size=0.1,
     random_state=42,
-    stratify=train_val_df["Region Combination"]
+    stratify=train_val_df["Region Combination"],
 )
 
 # Add rare samples back to training set
@@ -51,36 +53,46 @@ train_patients = pd.concat([train_patients, rare_samples])
 print(f"Final Training Set: {len(train_patients)} patients")
 print(f"Final Validation Set: {len(val_patients)} patients")
 
-final_splits = {"training": [], "validation": [], "test": splits["test"]}  # Keep test set unchanged
+final_splits = {
+    "training": [],
+    "validation": [],
+    "test": splits["test"],
+}  # Keep test set unchanged
 
 # Store training set
 for _, row in train_patients.iterrows():
-    final_splits["training"].append({
-        "image": [
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_flair.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1ce.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t2.nii.gz"
-        ],
-        "label": f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_seg.nii.gz",
-        "region_combination": row["Region Combination"]
-    })
+    final_splits["training"].append(
+        {
+            "image": [
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_flair.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1ce.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t2.nii.gz",
+            ],
+            "label": f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_seg.nii.gz",
+            "region_combination": row["Region Combination"],
+        }
+    )
 
 # Store validation set
 for _, row in val_patients.iterrows():
-    final_splits["validation"].append({
-        "image": [
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_flair.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1ce.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t2.nii.gz"
-        ],
-        "label": f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_seg.nii.gz",
-        "region_combination": row["Region Combination"]
-    })
+    final_splits["validation"].append(
+        {
+            "image": [
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_flair.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1ce.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t2.nii.gz",
+            ],
+            "label": f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_seg.nii.gz",
+            "region_combination": row["Region Combination"],
+        }
+    )
 
 # Save the final training splits
-final_split_path = "/home/magata/data/brats2021challenge/splits/final_training_splits.json"
+final_split_path = (
+    "/home/magata/data/brats2021challenge/splits/final_training_splits.json"
+)
 with open(final_split_path, "w") as f:
     json.dump(final_splits, f, indent=4)
 

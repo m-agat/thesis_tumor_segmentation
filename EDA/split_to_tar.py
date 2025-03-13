@@ -2,6 +2,7 @@ import os
 import tarfile
 import math
 
+
 def split_folder_to_tar_gz(folder_path, output_prefix, num_parts=4):
     """
     Splits the contents of a folder into multiple .tar.gz files.
@@ -13,12 +14,12 @@ def split_folder_to_tar_gz(folder_path, output_prefix, num_parts=4):
     """
     # Get all files and directories in the folder
     items = os.listdir(folder_path)
-    
+
     # Calculate chunk size
     chunk_size = math.ceil(len(items) / num_parts)
 
     # Split items into chunks
-    chunks = [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
+    chunks = [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
 
     # Create tar.gz files for each chunk
     for i, chunk in enumerate(chunks):
@@ -30,7 +31,10 @@ def split_folder_to_tar_gz(folder_path, output_prefix, num_parts=4):
                 print(f"Added {item_path}")
         print(f"Created: {tar_filename}")
 
+
 # Example usage
 folder_to_split = "/home/magata/data/brats2021challenge/RelabeledTrainingData"  # Replace with your folder path
-output_file_prefix = "/home/magata/data/brats2021challenge/split_folder"       # Prefix for .tar.gz files
+output_file_prefix = (
+    "/home/magata/data/brats2021challenge/split_folder"  # Prefix for .tar.gz files
+)
 split_folder_to_tar_gz(folder_to_split, output_file_prefix, num_parts=4)

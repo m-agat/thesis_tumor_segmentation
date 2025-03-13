@@ -1,7 +1,7 @@
 import torch
 import time
 import os
-import numpy as np 
+import numpy as np
 import sys
 from torch.cuda.amp import autocast, GradScaler
 from scipy.ndimage import center_of_mass
@@ -16,7 +16,17 @@ from monai.data import decollate_batch
 from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
 
 
-def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None, fold=0, use_folds=True):
+def train_epoch(
+    model,
+    loader,
+    optimizer,
+    scaler,
+    epoch,
+    loss_func,
+    writer=None,
+    fold=0,
+    use_folds=True,
+):
     model.train()
     start_time = time.time()
     run_loss = AverageMeter()
@@ -37,7 +47,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
         if torch.isnan(loss) or torch.isinf(loss):
             print("NaN detected in loss. Skipping step.")
             continue
-        
+
         # backpropagation
         scaler.scale(loss).backward()
 
@@ -47,7 +57,7 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
         # Clip gradients to prevent explosion
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-        # Step the optimizer 
+        # Step the optimizer
         scaler.step(optimizer)
         scaler.update()
 
@@ -55,9 +65,15 @@ def train_epoch(model, loader, optimizer, scaler, epoch, loss_func, writer=None,
 
         if writer and idx % 10 == 0:
             if use_folds:
-                writer.add_scalar(f"Fold_{fold + 1}/Batch_Loss/Train", loss.item(), epoch * len(loader) + idx)
+                writer.add_scalar(
+                    f"Fold_{fold + 1}/Batch_Loss/Train",
+                    loss.item(),
+                    epoch * len(loader) + idx,
+                )
             else:
-                writer.add_scalar(f"Final_Train_Loss/Batch", loss.item(), epoch * len(loader) + idx)
+                writer.add_scalar(
+                    f"Final_Train_Loss/Batch", loss.item(), epoch * len(loader) + idx
+                )
 
         print(
             f"Epoch {epoch}/{config.max_epochs} {idx}/{len(loader)}",
@@ -89,25 +105,25 @@ def val_epoch(
     post_activation=None,
     post_pred=None,
     writer=None,
-    fold=0, 
-    use_folds=True
+    fold=0,
+    use_folds=True,
 ):
     model.eval()
     start_time = time.time()
     run_acc = AverageMeter()
     run_loss = AverageMeter()
     run_hd95_meter = AverageMeter()
-    run_sensitivity = AverageMeter() 
-    run_specificity = AverageMeter()  
+    run_sensitivity = AverageMeter()
+    run_specificity = AverageMeter()
 
     # ConfusionMatrixMetric instance
     confusion_metric = ConfusionMatrixMetric(
-        include_background=False,  
-        metric_name=["sensitivity", "specificity"], 
-        reduction="none",  
-        compute_sample=False  
+        include_background=False,
+        metric_name=["sensitivity", "specificity"],
+        reduction="none",
+        compute_sample=False,
     )
-    
+
     with torch.no_grad(), autocast():
         for idx, batch_data in enumerate(loader):
             data, target = batch_data["image"].to(config.device), batch_data[
@@ -135,42 +151,54 @@ def val_epoch(
             dice_scores = acc.cpu().numpy()
             for i, dice_score in enumerate(dice_scores):
                 if not_nans[i] == 0:  # Tissue is absent in ground truth
-                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    pred_empty = (
+                        torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    )
                     dice_scores[i] = 1.0 if pred_empty else 0.0
             run_acc.update(dice_scores, n=not_nans.cpu().numpy())
 
-            # Compute Hausdorff 95 Distance 
+            # Compute Hausdorff 95 Distance
             hd95 = compute_hausdorff_distance(
                 y_pred=torch.stack(val_output_convert),
                 y=torch.stack(val_labels_list),
                 include_background=False,
                 distance_metric="euclidean",
-                percentile=95  # For HD95
+                percentile=95,  # For HD95
             )
 
-            
-
             # Update HD95 meter for all subregions
-            hd95 = hd95.squeeze(0).cpu().numpy()  
+            hd95 = hd95.squeeze(0).cpu().numpy()
             for i in range(len(hd95)):
-                pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                pred_empty = (
+                    torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                )
                 gt_empty = not_nans[i] == 0
 
                 if pred_empty and gt_empty:
-                    print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
+                    print(
+                        f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0."
+                    )
                     hd95[i] = 0.0
-                    
+
                 elif gt_empty and not pred_empty:  # Tissue is absent in ground truth
-                    pred_array = torch.stack(val_output_convert)[:, i].cpu().numpy()  # Convert to NumPy
+                    pred_array = (
+                        torch.stack(val_output_convert)[:, i].cpu().numpy()
+                    )  # Convert to NumPy
                     if np.sum(pred_array) > 0:
                         # Compute Center of Mass for the predicted mask
                         com = center_of_mass(pred_array)
                         com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                        com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                        com_coords = tuple(
+                            map(int, map(round, com))
+                        )  # Round and convert to integer indices
                         com_mask[com_coords] = 1
 
                         # Convert CoM mask back to tensor
-                        com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                        com_mask_tensor = (
+                            torch.from_numpy(com_mask)
+                            .to(torch.float32)
+                            .to(config.device)
+                        )
 
                         # Compute Hausdorff Distance between prediction and CoM mask
                         mock_val = compute_hausdorff_distance(
@@ -178,7 +206,7 @@ def val_epoch(
                             y=com_mask_tensor.unsqueeze(0),
                             include_background=False,
                             distance_metric="euclidean",
-                            percentile=95
+                            percentile=95,
                         )
 
                         print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
@@ -195,11 +223,17 @@ def val_epoch(
                         # Compute Center of Mass for the GT mask
                         com = center_of_mass(gt_array)
                         com_mask = np.zeros_like(gt_array, dtype=np.uint8)
-                        com_coords = tuple(map(int, map(round, com)))  # Round and convert to integer indices
+                        com_coords = tuple(
+                            map(int, map(round, com))
+                        )  # Round and convert to integer indices
                         com_mask[com_coords] = 1
 
                         # Convert CoM mask back to tensor
-                        com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                        com_mask_tensor = (
+                            torch.from_numpy(com_mask)
+                            .to(torch.float32)
+                            .to(config.device)
+                        )
 
                         # Compute Hausdorff Distance between GT CoM and empty prediction
                         mock_val = compute_hausdorff_distance(
@@ -207,10 +241,13 @@ def val_epoch(
                             y=com_mask_tensor.unsqueeze(0),
                             include_background=False,
                             distance_metric="euclidean",
-                            percentile=95
+                            percentile=95,
                         )
 
-                        print(f"Mock HD95 for region {i} (Prediction absent):", mock_val.item())
+                        print(
+                            f"Mock HD95 for region {i} (Prediction absent):",
+                            mock_val.item(),
+                        )
                         print(f"Before update, hd95: {hd95}")
                         hd95[i] = mock_val.item()
                         print(f"After update, hd95: {hd95}")
@@ -230,7 +267,9 @@ def val_epoch(
             specificity = specificity.squeeze(0).cpu().numpy()
             for i in range(len(sensitivity)):
                 if not_nans[i] == 0:  # Tissue is absent
-                    pred_empty = torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    pred_empty = (
+                        torch.sum(torch.stack(val_output_convert)[:, i]).item() == 0
+                    )
                     sensitivity[i] = 1.0 if pred_empty else 0.0
                     specificity[i] = 1.0
             run_sensitivity.update(sensitivity, n=config.batch_size)
@@ -257,36 +296,98 @@ def val_epoch(
     # Log average validation loss and Dice scores for the epoch
     if writer:
         if use_folds:
-            writer.add_scalar(f"Fold_{fold + 1}/Loss/Validation_Epoch", run_loss.avg, epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_NCR", run_acc.avg[0], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ED", run_acc.avg[1], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Dice/Validation_ET", run_acc.avg[2], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_NCR", run_hd95_meter.avg[0], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_ED", run_hd95_meter.avg[1], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/HD95/Validation_ET", run_hd95_meter.avg[2], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_NCR", run_sensitivity.avg[0], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_ED", run_sensitivity.avg[1], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Sensitivity/Validation_ET", run_sensitivity.avg[2], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_NCR", run_specificity.avg[0], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ED", run_specificity.avg[1], epoch)
-            writer.add_scalar(f"Fold_{fold + 1}/Specificity/Validation_ET", run_specificity.avg[2], epoch)
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Loss/Validation_Epoch", run_loss.avg, epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Dice/Validation_NCR", run_acc.avg[0], epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Dice/Validation_ED", run_acc.avg[1], epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Dice/Validation_ET", run_acc.avg[2], epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/HD95/Validation_NCR", run_hd95_meter.avg[0], epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/HD95/Validation_ED", run_hd95_meter.avg[1], epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/HD95/Validation_ET", run_hd95_meter.avg[2], epoch
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Sensitivity/Validation_NCR",
+                run_sensitivity.avg[0],
+                epoch,
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Sensitivity/Validation_ED",
+                run_sensitivity.avg[1],
+                epoch,
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Sensitivity/Validation_ET",
+                run_sensitivity.avg[2],
+                epoch,
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Specificity/Validation_NCR",
+                run_specificity.avg[0],
+                epoch,
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Specificity/Validation_ED",
+                run_specificity.avg[1],
+                epoch,
+            )
+            writer.add_scalar(
+                f"Fold_{fold + 1}/Specificity/Validation_ET",
+                run_specificity.avg[2],
+                epoch,
+            )
         else:
             writer.add_scalar("Final_Train_Loss/Validation_Epoch", run_loss.avg, epoch)
             writer.add_scalar("Final_Train_Dice/Validation_NCR", run_acc.avg[0], epoch)
             writer.add_scalar("Final_Train_Dice/Validation_ED", run_acc.avg[1], epoch)
             writer.add_scalar("Final_Train_Dice/Validation_ET", run_acc.avg[2], epoch)
-            writer.add_scalar("Final_Train_HD95/Validation_NCR", run_hd95_meter.avg[0], epoch)
-            writer.add_scalar("Final_Train_HD95/Validation_ED", run_hd95_meter.avg[1], epoch)
-            writer.add_scalar("Final_Train_HD95/Validation_ET", run_hd95_meter.avg[2], epoch)
-            writer.add_scalar("Final_Train_Sensitivity/Validation_NCR", run_sensitivity.avg[0], epoch)
-            writer.add_scalar("Final_Train_Sensitivity/Validation_ED", run_sensitivity.avg[1], epoch)
-            writer.add_scalar("Final_Train_Sensitivity/Validation_ET", run_sensitivity.avg[2], epoch)
-            writer.add_scalar("Final_Train_Specificity/Validation_NCR", run_specificity.avg[0], epoch)
-            writer.add_scalar("Final_Train_Specificity/Validation_ED", run_specificity.avg[1], epoch)
-            writer.add_scalar("Final_Train_Specificity/Validation_ET", run_specificity.avg[2], epoch)
+            writer.add_scalar(
+                "Final_Train_HD95/Validation_NCR", run_hd95_meter.avg[0], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_HD95/Validation_ED", run_hd95_meter.avg[1], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_HD95/Validation_ET", run_hd95_meter.avg[2], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_Sensitivity/Validation_NCR", run_sensitivity.avg[0], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_Sensitivity/Validation_ED", run_sensitivity.avg[1], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_Sensitivity/Validation_ET", run_sensitivity.avg[2], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_Specificity/Validation_NCR", run_specificity.avg[0], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_Specificity/Validation_ED", run_specificity.avg[1], epoch
+            )
+            writer.add_scalar(
+                "Final_Train_Specificity/Validation_ET", run_specificity.avg[2], epoch
+            )
 
-    return run_acc.avg, run_loss.avg, run_hd95_meter.avg, \
-            run_sensitivity.avg, run_specificity.avg 
+    return (
+        run_acc.avg,
+        run_loss.avg,
+        run_hd95_meter.avg,
+        run_sensitivity.avg,
+        run_specificity.avg,
+    )
+
 
 def trainer(
     model,
@@ -321,17 +422,21 @@ def trainer(
         "specificity_ed": [],
         "specificity_et": [],
         "loss_epochs": [],
-        "trains_epoch":[]
+        "trains_epoch": [],
     }
 
     scaler = GradScaler()
 
     # Hyperparameters
-    initial_lr = optimizer.param_groups[0]['lr']
-    weight_decay_value = optimizer.param_groups[0]['weight_decay']
+    initial_lr = optimizer.param_groups[0]["lr"]
+    weight_decay_value = optimizer.param_groups[0]["weight_decay"]
     optimizer_name = optimizer.__class__.__name__
 
-    model_suffix = f"_fold_{fold+1}_{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}" if use_folds else f"_{config.model_name}_final"
+    model_suffix = (
+        f"_fold_{fold+1}_{optimizer_name}_lr_{initial_lr}_wd_{weight_decay_value}"
+        if use_folds
+        else f"_{config.model_name}_final"
+    )
 
     for epoch in range(start_epoch, config.max_epochs):
         print(time.ctime(), "Epoch:", epoch)
@@ -347,7 +452,7 @@ def trainer(
             loss_func=loss_func,
             writer=writer,
             fold=fold,
-            use_folds=use_folds
+            use_folds=use_folds,
         )
 
         if torch.isnan(torch.tensor(train_loss)):  # New check
@@ -355,7 +460,7 @@ def trainer(
             break
 
         # Log learning rate
-        current_lr = optimizer.param_groups[0]['lr']
+        current_lr = optimizer.param_groups[0]["lr"]
         if writer:
             writer.add_scalar(f"Training/LearningRate{model_suffix}", current_lr, epoch)
 
@@ -371,18 +476,20 @@ def trainer(
             epoch_time = time.time()
 
             # Validation step
-            val_acc, val_loss, hd95_scores, sensitivity_scores, specificity_scores = val_epoch(
-                model,
-                val_loader,
-                epoch=epoch,
-                acc_func=acc_func,
-                loss_func=loss_func,
-                model_inferer=model_inferer,
-                post_activation=post_activation,
-                post_pred=post_pred,
-                writer=writer,
-                fold=fold,
-                use_folds=use_folds
+            val_acc, val_loss, hd95_scores, sensitivity_scores, specificity_scores = (
+                val_epoch(
+                    model,
+                    val_loader,
+                    epoch=epoch,
+                    acc_func=acc_func,
+                    loss_func=loss_func,
+                    model_inferer=model_inferer,
+                    post_activation=post_activation,
+                    post_pred=post_pred,
+                    writer=writer,
+                    fold=fold,
+                    use_folds=use_folds,
+                )
             )
 
             dice_ncr, dice_ed, dice_et = val_acc
@@ -396,38 +503,48 @@ def trainer(
             )
 
             # Store metrics for each subregion
+            for key, values in zip(["dice_ncr", "dice_ed", "dice_et"], val_acc):
+                metrics_history[key].append(values)
+
+            for key, values in zip(["hd95_ncr", "hd95_ed", "hd95_et"], hd95_scores):
+                metrics_history[key].append(values)
+
             for key, values in zip(
-                ["dice_ncr", "dice_ed", "dice_et"], val_acc
+                ["sensitivity_ncr", "sensitivity_ed", "sensitivity_et"],
+                sensitivity_scores,
             ):
                 metrics_history[key].append(values)
 
             for key, values in zip(
-                ["hd95_ncr", "hd95_ed", "hd95_et"], hd95_scores
-            ):
-                metrics_history[key].append(values)
-
-            for key, values in zip(
-                ["sensitivity_ncr", "sensitivity_ed", "sensitivity_et"], sensitivity_scores
-            ):
-                metrics_history[key].append(values)
-
-            for key, values in zip(
-                ["specificity_ncr", "specificity_ed", "specificity_et"], specificity_scores
+                ["specificity_ncr", "specificity_ed", "specificity_et"],
+                specificity_scores,
             ):
                 metrics_history[key].append(values)
 
             if val_avg_acc > val_acc_max:
                 print("new best ({:.6f} --> {:.6f}). ".format(val_acc_max, val_avg_acc))
                 val_acc_max = val_avg_acc
-                save_checkpoint(model, epoch, best_acc=val_acc_max, filename=f"best_acc{model_suffix}.pt")
+                save_checkpoint(
+                    model,
+                    epoch,
+                    best_acc=val_acc_max,
+                    filename=f"best_acc{model_suffix}.pt",
+                )
 
             if val_loss < val_loss_min:
                 print(f"new best loss ({val_loss_min:.6f} --> {val_loss:.6f}).")
                 val_loss_min = val_loss
-                save_checkpoint(model, epoch, best_acc=val_loss_min, filename=f"bestloss{model_suffix}.pt")
+                save_checkpoint(
+                    model,
+                    epoch,
+                    best_acc=val_loss_min,
+                    filename=f"bestloss{model_suffix}.pt",
+                )
 
             # Check for early stopping
-            if early_stopper is not None and epoch > 10: # trigger only after at least 10 epochs of training
+            if (
+                early_stopper is not None and epoch > 10
+            ):  # trigger only after at least 10 epochs of training
                 early_stopper(val_avg_acc, model, epoch, val_acc_max)
                 if early_stopper.early_stop:
                     print("Early stopping triggered. Stopping training.")
@@ -437,26 +554,34 @@ def trainer(
                 scheduler.step()
             except Exception as e:
                 print(f"Scheduler update failed: {e}")
-    
-    metrics_history["dice"] = np.nanmean([
-        np.nanmean(metrics_history["dice_ncr"]),
-        np.nanmean(metrics_history["dice_ed"]),
-        np.nanmean(metrics_history["dice_et"]),
-    ])
-    metrics_history["hd95"] = np.nanmean([
-        np.nanmean(metrics_history["hd95_ncr"]),
-        np.nanmean(metrics_history["hd95_ed"]),
-        np.nanmean(metrics_history["hd95_et"]),
-    ])
-    metrics_history["sensitivity"] = np.nanmean([
-        np.nanmean(metrics_history["sensitivity_ncr"]),
-        np.nanmean(metrics_history["sensitivity_ed"]),
-        np.nanmean(metrics_history["sensitivity_et"]),
-    ])
-    metrics_history["specificity"] = np.nanmean([
-        np.nanmean(metrics_history["specificity_ncr"]),
-        np.nanmean(metrics_history["specificity_ed"]),
-        np.nanmean(metrics_history["specificity_et"]),
-    ])
+
+    metrics_history["dice"] = np.nanmean(
+        [
+            np.nanmean(metrics_history["dice_ncr"]),
+            np.nanmean(metrics_history["dice_ed"]),
+            np.nanmean(metrics_history["dice_et"]),
+        ]
+    )
+    metrics_history["hd95"] = np.nanmean(
+        [
+            np.nanmean(metrics_history["hd95_ncr"]),
+            np.nanmean(metrics_history["hd95_ed"]),
+            np.nanmean(metrics_history["hd95_et"]),
+        ]
+    )
+    metrics_history["sensitivity"] = np.nanmean(
+        [
+            np.nanmean(metrics_history["sensitivity_ncr"]),
+            np.nanmean(metrics_history["sensitivity_ed"]),
+            np.nanmean(metrics_history["sensitivity_et"]),
+        ]
+    )
+    metrics_history["specificity"] = np.nanmean(
+        [
+            np.nanmean(metrics_history["specificity_ncr"]),
+            np.nanmean(metrics_history["specificity_ed"]),
+            np.nanmean(metrics_history["specificity_et"]),
+        ]
+    )
     print("Training Finished !, Best Accuracy: ", val_acc_max)
     return val_acc_max, metrics_history

@@ -14,19 +14,18 @@ print(os.getcwd())
 # Streamlit page configuration
 # --------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Tumor Segmentation",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Tumor Segmentation", layout="wide", initial_sidebar_state="expanded"
 )
 
 # --------------------------------------------------------------------------------
 # Utility Functions
 # --------------------------------------------------------------------------------
 
+
 def convert_dicom_to_nifti(dicom_files, output_filename="converted.nii"):
     """
     Converts a list of DICOM files (dicom_files) into a single NIfTI volume (output_filename).
-    Assumes axial slices and uses a simple diagonal affine. 
+    Assumes axial slices and uses a simple diagonal affine.
 
     Parameters:
     -----------
@@ -83,15 +82,17 @@ def check_file_format(file):
     Returns:
     --------
     str or None
-        "nifti" if the file is recognized as NIfTI, 
+        "nifti" if the file is recognized as NIfTI,
         "dicom" if recognized as DICOM,
         or None otherwise.
     """
     try:
         file.seek(0)
-        if file.name.endswith('.nii') or file.name.endswith('.nii.gz'):
+        if file.name.endswith(".nii") or file.name.endswith(".nii.gz"):
             return "nifti"
-        elif file.name.endswith('.dcm') or pydicom.dcmread(file, stop_before_pixels=True):
+        elif file.name.endswith(".dcm") or pydicom.dcmread(
+            file, stop_before_pixels=True
+        ):
             return "dicom"
     except Exception as e:
         st.error(f"Error checking format of {file.name}: {e}")
@@ -102,7 +103,7 @@ def show_simple(image_3d, slice_idx, title=""):
     """
     Displays a single slice from a 3D volume using Matplotlib.
     image_3d should have shape [D, H, W].
-    
+
     Parameters:
     -----------
     image_3d : np.ndarray
@@ -147,19 +148,20 @@ def load_nifti(file_path):
 # Additional functions for tumor counting or slice range
 # --------------------------------------------------------------------------------
 from scipy.ndimage import (
-    label, 
-    generate_binary_structure, 
-    binary_dilation, 
-    center_of_mass
+    label,
+    generate_binary_structure,
+    binary_dilation,
+    center_of_mass,
 )
 from scipy.spatial.distance import pdist, squareform
 
+
 def count_tumors(mask, min_voxel_size=6, min_distance=40):
     """
-    Counts tumors in a 3D binary mask. Each connected component above a size threshold 
-    is considered. If multiple tumors are close (below min_distance in centroid space), 
+    Counts tumors in a 3D binary mask. Each connected component above a size threshold
+    is considered. If multiple tumors are close (below min_distance in centroid space),
     they are considered the same.
-    
+
     Parameters:
     -----------
     mask : np.ndarray
@@ -180,7 +182,8 @@ def count_tumors(mask, min_voxel_size=6, min_distance=40):
 
     # Filter out small connected components
     large_regions = [
-        i for i in range(1, num_features + 1)
+        i
+        for i in range(1, num_features + 1)
         if (labeled_mask == i).sum() > min_voxel_size
     ]
     if len(large_regions) == 0:
@@ -214,9 +217,9 @@ def count_tumors(mask, min_voxel_size=6, min_distance=40):
 
 def calculate_valid_slices(masks):
     """
-    Finds the global minimum and maximum slice indices that contain any non-zero 
-    data among a list of 3D volumes. It was used previously for a global slider, 
-    but we no longer use a single global slider per design. 
+    Finds the global minimum and maximum slice indices that contain any non-zero
+    data among a list of 3D volumes. It was used previously for a global slider,
+    but we no longer use a single global slider per design.
     Kept here if needed for some other feature.
 
     Parameters:
@@ -227,7 +230,7 @@ def calculate_valid_slices(masks):
     Returns:
     --------
     (int, int)
-        The minimum and maximum slice indices that contain non-zero data across 
+        The minimum and maximum slice indices that contain non-zero data across
         all volumes. If none are non-zero, returns (0,0).
     """
     valid_slices = set()
@@ -252,7 +255,7 @@ def rescale_intensity_sitk(sitk_image):
 
 def realign_images_to_reference(nifti_paths):
     """
-    Realigns all images in 'nifti_paths' to the first one (considered the reference). 
+    Realigns all images in 'nifti_paths' to the first one (considered the reference).
     Uses a basic Euler3D transform initializer with MeanSquares and linear interpolation.
 
     Parameters:
@@ -274,7 +277,9 @@ def realign_images_to_reference(nifti_paths):
     ref_img_sitk = rescale_intensity_sitk(ref_img_sitk)
 
     output_paths = []
-    ref_output_path = os.path.join(os.getcwd(), f"preproc_{os.path.basename(reference_path)}")
+    ref_output_path = os.path.join(
+        os.getcwd(), f"preproc_{os.path.basename(reference_path)}"
+    )
     sitk.WriteImage(ref_img_sitk, ref_output_path)
     output_paths.append(ref_output_path)
 
@@ -287,7 +292,7 @@ def realign_images_to_reference(nifti_paths):
             ref_img_sitk,
             mov_img_sitk,
             sitk.Euler3DTransform(),
-            sitk.CenteredTransformInitializerFilter.GEOMETRY
+            sitk.CenteredTransformInitializerFilter.GEOMETRY,
         )
 
         registration_method = sitk.ImageRegistrationMethod()
@@ -301,7 +306,7 @@ def realign_images_to_reference(nifti_paths):
 
         final_transform = registration_method.Execute(
             sitk.Cast(ref_img_sitk, sitk.sitkFloat32),
-            sitk.Cast(mov_img_sitk, sitk.sitkFloat32)
+            sitk.Cast(mov_img_sitk, sitk.sitkFloat32),
         )
 
         # Resample the moving image into the reference space
@@ -311,7 +316,7 @@ def realign_images_to_reference(nifti_paths):
             final_transform,
             sitk.sitkLinear,
             0.0,
-            mov_img_sitk.GetPixelID()
+            mov_img_sitk.GetPixelID(),
         )
 
         out_path = os.path.join(os.getcwd(), f"preproc_{os.path.basename(path)}")
@@ -319,6 +324,7 @@ def realign_images_to_reference(nifti_paths):
         output_paths.append(out_path)
 
     return output_paths
+
 
 # --------------------------------------------------------------------------------
 # Create Streamlit tabs
@@ -336,7 +342,7 @@ with tab1:
     uploaded_files = st.sidebar.file_uploader(
         "Upload up to 4 files (NIfTI or DICOM):",
         type=["nii", "nii.gz", "dcm"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
     )
 
     # 2) "Preprocess" button
@@ -347,8 +353,7 @@ with tab1:
 
     # 4) Optional Ground Truth upload
     gt_file = st.sidebar.file_uploader(
-        "Upload Ground Truth (optional)",
-        type=["nii", "nii.gz"]
+        "Upload Ground Truth (optional)", type=["nii", "nii.gz"]
     )
 
     # Save the GT path into session_state if provided
@@ -384,7 +389,9 @@ with tab1:
             elif file_format == "dicom":
                 st.warning(f"DICOM file detected: {file.name}. Converting to NIfTI...")
                 file.seek(0)
-                converted_path = convert_dicom_to_nifti([file], f"converted_{file.name}.nii")
+                converted_path = convert_dicom_to_nifti(
+                    [file], f"converted_{file.name}.nii"
+                )
                 if converted_path:
                     st.info(f"Converted to NIfTI: {converted_path}")
                     nifti_files.append(converted_path)
@@ -393,7 +400,9 @@ with tab1:
 
         # Ensure we have 4 files by duplicating if fewer
         if len(nifti_files) < 4:
-            st.warning("Fewer than 4 files detected. Duplicating some files to proceed.")
+            st.warning(
+                "Fewer than 4 files detected. Duplicating some files to proceed."
+            )
             while len(nifti_files) < 4 and len(nifti_files) > 0:
                 nifti_files.append(nifti_files[-1])
         elif len(nifti_files) == 4:
@@ -443,13 +452,13 @@ with tab1:
                     if max_slices > 0:
                         sidx = st.slider(
                             f"Slice {uf.name}",
-                            0, 
-                            max_slices, 
-                            0, 
-                            key=f"dicom_slider_{i}"
+                            0,
+                            max_slices,
+                            0,
+                            key=f"dicom_slider_{i}",
                         )
                     # Insert a temporary dimension so show_simple expects [D,H,W]
-                    # In this case, "volume" is already [D,H,W], so we can show directly 
+                    # In this case, "volume" is already [D,H,W], so we can show directly
                     fig = show_simple(volume, sidx, title=f"DICOM {uf.name}")
                     st.pyplot(fig)
 
@@ -466,10 +475,10 @@ with tab1:
                     if depth > 1:
                         sidx = st.slider(
                             f"Slice {uf.name}",
-                            0, 
-                            depth - 1, 
-                            sidx, 
-                            key=f"nifti_slider_{i}"
+                            0,
+                            depth - 1,
+                            sidx,
+                            key=f"nifti_slider_{i}",
                         )
                     fig = show_simple(volume_data, sidx, title=f"NIfTI {uf.name}")
                     st.pyplot(fig)
@@ -497,7 +506,9 @@ with results:
         # By default, the user must check to show GT
         show_reality = st.checkbox("Show Ground Truth", value=False)
         # Combined mask
-        show_combined = st.checkbox("Show Combined Masks (NCR + Edema + ET)", value=True)
+        show_combined = st.checkbox(
+            "Show Combined Masks (NCR + Edema + ET)", value=True
+        )
 
     # selected_maps will collect (map_name, map_path) pairs
     selected_maps = {}
@@ -509,17 +520,29 @@ with results:
 
     # If other checkboxes are active, add their default paths
     if show_ncr:
-        selected_maps["Necrotic Core"] = "./brats_example_segmentations/BraTS2021_00657/BraTS2021_00657_uncertainty_map_NCR.nii.gz"
+        selected_maps["Necrotic Core"] = (
+            "./brats_example_segmentations/BraTS2021_00657/BraTS2021_00657_uncertainty_map_NCR.nii.gz"
+        )
         # selected_maps["Necrotic Core"] = "./brats_example_segmentations/BraTS2021_00757/BraTS2021_00757_uncertainty_map_NCR.nii.gz"
-        selected_maps["Necrotic Core"] = "./brats_example_segmentations/BraTS2021_two_tumors_merged/BraTS2021_00688_AND_01309_uncertainty_map_NCR.nii.gz"
+        selected_maps["Necrotic Core"] = (
+            "./brats_example_segmentations/BraTS2021_two_tumors_merged/BraTS2021_00688_AND_01309_uncertainty_map_NCR.nii.gz"
+        )
     if show_ed:
-        selected_maps["Edema"] = "./brats_example_segmentations/BraTS2021_00657/BraTS2021_00657_uncertainty_map_ED.nii.gz"
+        selected_maps["Edema"] = (
+            "./brats_example_segmentations/BraTS2021_00657/BraTS2021_00657_uncertainty_map_ED.nii.gz"
+        )
         # selected_maps["Edema"] = "./brats_example_segmentations/BraTS2021_00757/BraTS2021_00757_uncertainty_map_ED.nii.gz"
-        selected_maps["Edema"] = "./brats_example_segmentations/BraTS2021_two_tumors_merged/BraTS2021_00688_AND_01309_uncertainty_map_ED.nii.gz"
+        selected_maps["Edema"] = (
+            "./brats_example_segmentations/BraTS2021_two_tumors_merged/BraTS2021_00688_AND_01309_uncertainty_map_ED.nii.gz"
+        )
     if show_et:
-        selected_maps["Enhancing Tumor"] = "./brats_example_segmentations/BraTS2021_00657/BraTS2021_00657_uncertainty_map_ET.nii.gz"
+        selected_maps["Enhancing Tumor"] = (
+            "./brats_example_segmentations/BraTS2021_00657/BraTS2021_00657_uncertainty_map_ET.nii.gz"
+        )
         # selected_maps["Enhancing Tumor"] = "./brats_example_segmentations/BraTS2021_00757/BraTS2021_00757_uncertainty_map_ET.nii.gz"
-        selected_maps["Enhancing Tumor"] = "./brats_example_segmentations/BraTS2021_two_tumors_merged/BraTS2021_00688_AND_01309_uncertainty_map_ET.nii.gz"
+        selected_maps["Enhancing Tumor"] = (
+            "./brats_example_segmentations/BraTS2021_two_tumors_merged/BraTS2021_00688_AND_01309_uncertainty_map_ET.nii.gz"
+        )
     if show_combined:
         selected_maps["Combined Mask"] = "combined"
 
@@ -547,7 +570,7 @@ with results:
             ncr = load_nifti(ncr_path)
             ed = load_nifti(ed_path)
             et = load_nifti(et_path)
-            combined_mask = (ncr > 0)*1 + (ed > 0)*2 + (et > 0)*3
+            combined_mask = (ncr > 0) * 1 + (ed > 0) * 2 + (et > 0) * 3
 
             loaded_masks[map_name] = combined_mask
             masks_to_check.append(combined_mask)
@@ -592,8 +615,13 @@ with results:
             # Check if we have metrics for this map
             if map_name in metrics:
                 with col_metrics[idx]:
-                    st.metric(label=f"{map_name} Tumors", value=f"{tumor_counts[map_name]}")
-                    st.metric(label=f"{map_name} Total Volume", value=f"{metrics[map_name]:.2f}")
+                    st.metric(
+                        label=f"{map_name} Tumors", value=f"{tumor_counts[map_name]}"
+                    )
+                    st.metric(
+                        label=f"{map_name} Total Volume",
+                        value=f"{metrics[map_name]:.2f}",
+                    )
                     # If there's more than one tumor, show each volume
                     if tumor_counts[map_name] > 1:
                         for i, vol in enumerate(tumor_volumes[map_name]):
@@ -610,7 +638,7 @@ with results:
                 volume_3d = loaded_masks[map_name]
 
                 # 1) Find the non-empty slice range
-                non_zero_slices = (volume_3d != 0).any(axis=(1,2)).nonzero()[0]
+                non_zero_slices = (volume_3d != 0).any(axis=(1, 2)).nonzero()[0]
                 if len(non_zero_slices) > 0:
                     min_sli = int(non_zero_slices[0])
                     max_sli = int(non_zero_slices[-1])
@@ -624,15 +652,15 @@ with results:
                     f"{map_name} - Slice",
                     min_value=min_sli,
                     max_value=max_sli,
-                    value=(min_sli + max_sli)//2,
-                    key=f"slice_{map_name}"
+                    value=(min_sli + max_sli) // 2,
+                    key=f"slice_{map_name}",
                 )
 
                 # 2) Threshold slider
                 #   We take min and max intensity in the volume
                 vmin = float(volume_3d.min())
                 vmax = float(volume_3d.max())
-                step_val = (vmax - vmin)/100 if vmax>vmin else 1.0
+                step_val = (vmax - vmin) / 100 if vmax > vmin else 1.0
 
                 threshold = st.slider(
                     f"{map_name} - Threshold",
@@ -640,7 +668,7 @@ with results:
                     max_value=vmax,
                     value=vmin,
                     step=step_val,
-                    key=f"thr_{map_name}"
+                    key=f"thr_{map_name}",
                 )
 
                 # 3) Apply threshold on the selected slice

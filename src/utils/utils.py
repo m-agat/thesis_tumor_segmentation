@@ -5,6 +5,7 @@ import config.config as config
 import nibabel as nib
 import matplotlib.pyplot as plt
 
+
 def save_checkpoint(model, epoch, filename="model.pt", best_acc=0, dir_add=None):
     state_dict = model.state_dict()
     save_dict = {"epoch": epoch, "best_acc": best_acc, "state_dict": state_dict}
@@ -89,6 +90,7 @@ class EarlyStopping:
             )
             self.counter = 0
 
+
 def convert_to_serializable(obj):
     if isinstance(obj, (np.float32, np.float64)):
         return float(obj)
@@ -130,5 +132,7 @@ def visualize_slices(
     plt.suptitle(f"Patient: {patient_path}, Slice: {slice_num}", fontsize=16)
 
     # Save the figure as a file
-    plt.savefig(f"/home/agata/Desktop/thesis_tumor_segmentation/figures/testing/visualization_{patient_path}_{slice_num}.png")
+    plt.savefig(
+        f"/home/agata/Desktop/thesis_tumor_segmentation/figures/testing/visualization_{patient_path}_{slice_num}.png"
+    )
     plt.close()

@@ -1,7 +1,7 @@
 import random
-import sys 
-import json 
-import os 
+import sys
+import json
+import os
 import itertools
 
 sys.path.append("../")
@@ -17,42 +17,57 @@ from monai.metrics import DiceMetric
 from monai.utils.enums import MetricReduction
 from monai.losses import GeneralizedDiceFocalLoss
 from monai.transforms import AsDiscrete, Activations
-                  
+
 import torch
+
 # Enable cuDNN benchmark for optimized performance
-torch.backends.cudnn.benchmark = True 
+torch.backends.cudnn.benchmark = True
 
-torch.manual_seed(42)     
+torch.manual_seed(42)
 
-# Loss 
+# Loss
 loss_func = GeneralizedDiceFocalLoss(
-    include_background=False, # We focus on subregions, not background
-    to_onehot_y=False, # One-hot encoded in the transformations
-    sigmoid=False, # Use softmax for multi-class segmentation
-    softmax=True, # Multi-class softmax output
-    w_type="square"
+    include_background=False,  # We focus on subregions, not background
+    to_onehot_y=False,  # One-hot encoded in the transformations
+    sigmoid=False,  # Use softmax for multi-class segmentation
+    softmax=True,  # Multi-class softmax output
+    w_type="square",
 )
 
 # Dice score
 dice_acc = DiceMetric(
-    include_background=False, 
-    reduction=MetricReduction.MEAN_BATCH, # Compute average Dice for each batch
+    include_background=False,
+    reduction=MetricReduction.MEAN_BATCH,  # Compute average Dice for each batch
     get_not_nans=True,
 )
 
+
 # Scheduler
 def scheduler_func(optimizer):
-    return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.max_epochs)
+    return torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.max_epochs
+    )
+
 
 # Post-processing transforms
-post_activation = Activations(softmax=True) # Softmax for multi-class output
-post_pred = AsDiscrete(argmax=True, to_onehot=4) # get the class with the highest prob for each channel
+post_activation = Activations(softmax=True)  # Softmax for multi-class output
+post_pred = AsDiscrete(
+    argmax=True, to_onehot=4
+)  # get the class with the highest prob for each channel
 
 configs = [
     (1e-4, "AdamW", 1e-5),  # Configuration A (Baseline as per MONAI tutorial)
     (1e-4, "AdamW", 1e-4),  # Configuration B (Same LR with increased weight decay)
-    (1e-3, "SGD", 1e-5),     # Configuration C (Using SGD with a higher LR, lower weight decay)
-    (1e-3, "SGD", 1e-4)      # Configuration D (Using SGD with a higher LR and increased weight decay)
+    (
+        1e-3,
+        "SGD",
+        1e-5,
+    ),  # Configuration C (Using SGD with a higher LR, lower weight decay)
+    (
+        1e-3,
+        "SGD",
+        1e-4,
+    ),  # Configuration D (Using SGD with a higher LR and increased weight decay)
 ]
 
 # Store results for each configuration
@@ -68,7 +83,7 @@ for idx, (lr, opt, wd) in enumerate(configs):
             return torch.optim.AdamW(params, lr=lr, weight_decay=wd)
         elif opt == "SGD":
             return torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=wd)
-        
+
     # Perform cross-validation for this configuration
     fold_results, avg_metrics = cross_validate_trainer(
         model_class=models.models_dict[f"{config.model_name}_model.pt"],
@@ -78,26 +93,30 @@ for idx, (lr, opt, wd) in enumerate(configs):
         scheduler_func=scheduler_func,
         num_folds=config.num_folds,
         post_activation=post_activation,
-        post_pred=post_pred
+        post_pred=post_pred,
     )
 
     # Save the results
-    tuning_results.append({
-        "learning_rate": lr,
-        "optimizer": opt,
-        "weight_decay": wd,
-        "avg_dice": avg_metrics.get("avg_dice", None),
-        "avg_hd95": avg_metrics.get("avg_hd95", None),
-        "avg_sensitivity": avg_metrics.get("avg_sensitivity", None),
-        "avg_specificity": avg_metrics.get("avg_specificity", None),
-    })
+    tuning_results.append(
+        {
+            "learning_rate": lr,
+            "optimizer": opt,
+            "weight_decay": wd,
+            "avg_dice": avg_metrics.get("avg_dice", None),
+            "avg_hd95": avg_metrics.get("avg_hd95", None),
+            "avg_sensitivity": avg_metrics.get("avg_sensitivity", None),
+            "avg_specificity": avg_metrics.get("avg_specificity", None),
+        }
+    )
 
 # Sort results by the average Dice score
 tuning_results.sort(key=lambda x: x["avg_dice"], reverse=True)
 tuning_results = convert_to_serializable(tuning_results)
 
 # Save tuning results to JSON
-tuning_results_path = os.path.join(config.output_dir, f"{config.model_name}_hyperparameter_tuning_results.json")
+tuning_results_path = os.path.join(
+    config.output_dir, f"{config.model_name}_hyperparameter_tuning_results.json"
+)
 with open(tuning_results_path, "w") as f:
     json.dump(tuning_results, f, indent=4)
 

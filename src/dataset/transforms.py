@@ -38,7 +38,7 @@ def get_val_transforms():
             transforms.NormalizeIntensityd(
                 keys="image", nonzero=True, channel_wise=True
             ),
-            transforms.EnsureChannelFirstd(keys=["label"]), 
+            transforms.EnsureChannelFirstd(keys=["label"]),
             transforms.AsDiscreted(keys="label", to_onehot=4),
         ]
     )

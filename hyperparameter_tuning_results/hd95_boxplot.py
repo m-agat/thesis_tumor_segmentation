@@ -7,10 +7,12 @@ import matplotlib.pyplot as plt
 log_file_path = "./output_swinunetr2574357.log"
 
 # Dictionary to store HD95 values per configuration
-configurations = {"Config 1": {"NCR": [], "ED": [], "ET": []},
-                  "Config 2": {"NCR": [], "ED": [], "ET": []},
-                  "Config 3": {"NCR": [], "ED": [], "ET": []},
-                  "Config 4": {"NCR": [], "ED": [], "ET": []}}
+configurations = {
+    "Config 1": {"NCR": [], "ED": [], "ET": []},
+    "Config 2": {"NCR": [], "ED": [], "ET": []},
+    "Config 3": {"NCR": [], "ED": [], "ET": []},
+    "Config 4": {"NCR": [], "ED": [], "ET": []},
+}
 
 # Read and parse the log file
 current_config = None
@@ -25,12 +27,16 @@ with open(log_file_path, "r") as file:
                 current_config = f"Config {config_num}"
 
         # Extract HD95 values
-        match_hd95 = re.search(r"HD95 NCR: ([\d\.]+|nan), HD95 ED: ([\d\.]+), HD95 ET: ([\d\.]+)", line)
+        match_hd95 = re.search(
+            r"HD95 NCR: ([\d\.]+|nan), HD95 ED: ([\d\.]+), HD95 ET: ([\d\.]+)", line
+        )
         if match_hd95 and current_config:
-            hd95_ncr = np.nan if match_hd95.group(1) == "nan" else float(match_hd95.group(1))
+            hd95_ncr = (
+                np.nan if match_hd95.group(1) == "nan" else float(match_hd95.group(1))
+            )
             hd95_ed = float(match_hd95.group(2))
             hd95_et = float(match_hd95.group(3))
-            
+
             # Append values
             configurations[current_config]["NCR"].append(hd95_ncr)
             configurations[current_config]["ED"].append(hd95_ed)
@@ -38,6 +44,7 @@ with open(log_file_path, "r") as file:
 
 # Convert to DataFrame
 config_dfs = {key: pd.DataFrame(values) for key, values in configurations.items()}
+
 
 # Function to create and save boxplots for each sub-region
 def plot_and_save_boxplot(subregion, filename):
@@ -49,6 +56,7 @@ def plot_and_save_boxplot(subregion, filename):
     plt.grid(axis="y", linestyle="--", alpha=0.7)
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close()
+
 
 # Generate and save individual plots
 plot_and_save_boxplot("NCR", "hd95_swinunetr_ncr.png")
