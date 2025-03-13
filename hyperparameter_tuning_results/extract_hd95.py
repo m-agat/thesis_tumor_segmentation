@@ -18,12 +18,20 @@ with open(log_file_path, "r") as file:
         if match_config:
             current_config = f"Config {match_config.group(1)} ({match_config.group(2)})"
             if current_config not in configurations:
-                configurations[current_config] = {"NCR": [], "ED": [], "ET": []}  # Store as lists
+                configurations[current_config] = {
+                    "NCR": [],
+                    "ED": [],
+                    "ET": [],
+                }  # Store as lists
 
         # Extract HD95 values
-        match_hd95 = re.search(r"HD95 NCR: ([\d\.]+|nan), HD95 ED: ([\d\.]+), HD95 ET: ([\d\.]+)", line)
+        match_hd95 = re.search(
+            r"HD95 NCR: ([\d\.]+|nan), HD95 ED: ([\d\.]+), HD95 ET: ([\d\.]+)", line
+        )
         if match_hd95 and current_config:
-            hd95_ncr = np.nan if match_hd95.group(1) == "nan" else float(match_hd95.group(1))
+            hd95_ncr = (
+                np.nan if match_hd95.group(1) == "nan" else float(match_hd95.group(1))
+            )
             hd95_ed = float(match_hd95.group(2))
             hd95_et = float(match_hd95.group(3))
 
@@ -57,7 +65,11 @@ for config, values in configurations.items():
 
     # Print extracted values to verify correctness
     print(f"\n=== {config} ===")
-    print(f"HD95 NCR: {mean_ncr:.4f} ± {std_ncr:.4f}" if not np.isnan(mean_ncr) else "HD95 NCR: Skipped (NaN)")
+    print(
+        f"HD95 NCR: {mean_ncr:.4f} ± {std_ncr:.4f}"
+        if not np.isnan(mean_ncr)
+        else "HD95 NCR: Skipped (NaN)"
+    )
     print(f"HD95 ED: {mean_ed:.4f} ± {std_ed:.4f}")
     print(f"HD95 ET: {mean_et:.4f} ± {std_et:.4f}")
     print(f"Overall HD95: {overall_mean_hd95:.4f} ± {overall_std_hd95:.4f}")

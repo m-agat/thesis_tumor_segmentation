@@ -1,5 +1,6 @@
 import os
 import sys
+
 sys.path.append("../")
 import models.models as models
 import torch
@@ -122,7 +123,10 @@ with torch.no_grad():
         # )
 
 df_patient_scores = pd.DataFrame(patient_scores)
-df_patient_scores.to_csv(os.path.join(base_path, "patient_scores_swinunetr.csv"), index=False)
+df_patient_scores.to_csv(
+    os.path.join(base_path, "patient_scores_swinunetr.csv"), index=False
+)
+
 
 def mean_excluding_inf(values):
     finite_values = [v for v in values if not np.isinf(v)]
@@ -153,6 +157,8 @@ avg_scores = {
     ],
 }
 df_avg_scores = pd.DataFrame(avg_scores)
-df_avg_scores.to_csv(os.path.join(base_path, "average_scores_swinunetr.csv"), index=False)
+df_avg_scores.to_csv(
+    os.path.join(base_path, "average_scores_swinunetr.csv"), index=False
+)
 
 print("Saved individual and average metrics.")

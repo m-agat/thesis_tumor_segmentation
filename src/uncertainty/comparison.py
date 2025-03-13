@@ -1,5 +1,5 @@
 import pandas as pd
-import numpy as np 
+import numpy as np
 
 # Load the two CSV files
 file1 = "/mnt/c/Users/agata/Desktop/thesis_tumor_segmentation/src/uncertainty/outputs/subregion_ensemble_performance_full.csv"
@@ -22,22 +22,32 @@ df2_filtered = df2[(df2[hd95_columns] < hd95_threshold).all(axis=1)]
 common_column = "Patient"
 
 # Filter rows in the second DataFrame to match rows in the first
-df2_filtered = df2_filtered[df2_filtered[common_column].isin(df1_filtered[common_column])]
+df2_filtered = df2_filtered[
+    df2_filtered[common_column].isin(df1_filtered[common_column])
+]
 
 # Compute column-wise averages
-average_df1 = df1_filtered.mean(numeric_only=True)  # Compute average for all rows in the first file
-average_df2 = df2_filtered.mean(numeric_only=True)  # Compute average for filtered rows in the second file
+average_df1 = df1_filtered.mean(
+    numeric_only=True
+)  # Compute average for all rows in the first file
+average_df2 = df2_filtered.mean(
+    numeric_only=True
+)  # Compute average for filtered rows in the second file
 
 # Compare the averages
-comparison = pd.DataFrame({
-    "Ensemble Average": average_df1,
-    "Swinunetr Filtered Average": average_df2,
-    "Difference": average_df1 - average_df2
-})
+comparison = pd.DataFrame(
+    {
+        "Ensemble Average": average_df1,
+        "Swinunetr Filtered Average": average_df2,
+        "Difference": average_df1 - average_df2,
+    }
+)
 
 # Display the comparison
 print(comparison)
 
 # Save the comparison to a CSV file
-comparison.to_csv("/mnt/c/Users/agata/Desktop/thesis_tumor_segmentation/src/uncertainty/outputs/average_comparison.csv")
+comparison.to_csv(
+    "/mnt/c/Users/agata/Desktop/thesis_tumor_segmentation/src/uncertainty/outputs/average_comparison.csv"
+)
 print("Comparison saved to 'average_comparison.csv'.")

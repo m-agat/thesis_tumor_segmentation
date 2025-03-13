@@ -8,6 +8,7 @@ sys.path.append("../")
 
 import config.config as config
 
+
 def load_fold_results(fold_dir):
     """
     Loads saved numpy arrays for predictions, probabilities, and true labels
@@ -20,11 +21,11 @@ def load_fold_results(fold_dir):
     # Iterate over files in the fold directory
     for file_name in os.listdir(fold_dir):
         if file_name.startswith("pred_labels_batch_") and file_name.endswith(".npz"):
-            pred_labels.append(np.load(os.path.join(fold_dir, file_name))['arr_0'])
+            pred_labels.append(np.load(os.path.join(fold_dir, file_name))["arr_0"])
         elif file_name.startswith("probs_batch_") and file_name.endswith(".npz"):
-            probs.append(np.load(os.path.join(fold_dir, file_name))['arr_0'])
+            probs.append(np.load(os.path.join(fold_dir, file_name))["arr_0"])
         elif file_name.startswith("true_labels_batch_") and file_name.endswith(".npz"):
-            true_labels.append(np.load(os.path.join(fold_dir, file_name))['arr_0'])
+            true_labels.append(np.load(os.path.join(fold_dir, file_name))["arr_0"])
 
     # Concatenate all batches into single arrays
     y_pred_all = np.concatenate(pred_labels, axis=0)  # Concatenate along batch axis
@@ -34,9 +35,13 @@ def load_fold_results(fold_dir):
     return y_true_all, y_pred_all, y_prob_all
 
 
-def plot_confusion_matrix(y_true, y_pred, class_names=["Background", "NCR", "ED", "ET"]):
+def plot_confusion_matrix(
+    y_true, y_pred, class_names=["Background", "NCR", "ED", "ET"]
+):
     # Compute confusion matrix
-    cm = confusion_matrix(y_true.flatten(), y_pred.flatten(), labels=[0, 1, 2, 3], normalize='true')
+    cm = confusion_matrix(
+        y_true.flatten(), y_pred.flatten(), labels=[0, 1, 2, 3], normalize="true"
+    )
 
     # Plot confusion matrix as a figure
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -56,8 +61,12 @@ def plot_roc_curve(y_true_all, y_prob_all, fold, epoch):
 
     for i, class_label in enumerate(class_labels):
         # Convert to binary format for the subregion
-        y_true_binary = (y_true_all == i + 1).astype(int).flatten()  # 1 for the subregion, 0 for others
-        y_pred_probs = y_prob_all[:, i + 1].flatten()  # Predicted probabilities for the subregion
+        y_true_binary = (
+            (y_true_all == i + 1).astype(int).flatten()
+        )  # 1 for the subregion, 0 for others
+        y_pred_probs = y_prob_all[
+            :, i + 1
+        ].flatten()  # Predicted probabilities for the subregion
 
         # Compute FPR, TPR, and AUC
         fpr, tpr, _ = roc_curve(y_true_binary, y_pred_probs)
@@ -66,14 +75,15 @@ def plot_roc_curve(y_true_all, y_prob_all, fold, epoch):
         # Plot the ROC curve for the subregion
         ax.plot(fpr, tpr, label=f"{class_label} (AUC = {auc_score:.4f})")
 
-    ax.plot([0, 1], [0, 1], linestyle='--', color='gray')  # Random chance line
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray")  # Random chance line
     ax.set_xlabel("False Positive Rate")
     ax.set_ylabel("True Positive Rate")
     ax.set_title("ROC Curves for Tumor Subregions")
     ax.legend(loc="lower right")
     plt.close(fig)
-    
-    return fig 
+
+    return fig
+
 
 def generate_roc_and_confusion_matrix(fold_dir, fold=1, epoch=None):
     """
@@ -87,18 +97,29 @@ def generate_roc_and_confusion_matrix(fold_dir, fold=1, epoch=None):
     y_true_all, y_pred_all, y_prob_all = load_fold_results(fold_dir)
 
     # Generate and save confusion matrix
-    cm_fig = plot_confusion_matrix(y_true_all, y_pred_all, class_names=["Background", "NCR", "ED", "ET"])
-    cm_fig.savefig(os.path.join(fold_dir_save, f"confusion_matrix_fold_{fold}_epoch_{epoch}.png"))
-    print(f"Confusion matrix saved at: {os.path.join(fold_dir_save, f'confusion_matrix_fold_{fold}_epoch_{epoch}.png')}")
+    cm_fig = plot_confusion_matrix(
+        y_true_all, y_pred_all, class_names=["Background", "NCR", "ED", "ET"]
+    )
+    cm_fig.savefig(
+        os.path.join(fold_dir_save, f"confusion_matrix_fold_{fold}_epoch_{epoch}.png")
+    )
+    print(
+        f"Confusion matrix saved at: {os.path.join(fold_dir_save, f'confusion_matrix_fold_{fold}_epoch_{epoch}.png')}"
+    )
 
     # Generate and save ROC curve
     roc_fig = plot_roc_curve(y_true_all, y_prob_all, fold, epoch)
-    roc_fig.savefig(os.path.join(fold_dir_save, f"roc_curve_fold_{fold}_epoch_{epoch}.png"))
-    print(f"ROC curve saved at: {os.path.join(fold_dir_save, f'roc_curve_fold_{fold}_epoch_{epoch}.png')}")
+    roc_fig.savefig(
+        os.path.join(fold_dir_save, f"roc_curve_fold_{fold}_epoch_{epoch}.png")
+    )
+    print(
+        f"ROC curve saved at: {os.path.join(fold_dir_save, f'roc_curve_fold_{fold}_epoch_{epoch}.png')}"
+    )
 
     print("Confusion matrix and ROC curve generated.")
 
+
 fold_dir = r"/mnt/c/Users/agata/Desktop/thesis_tumor_segmentation/src/train/outputs/swinunetr/fold_5_results"
 
-# Generate ROC and confusion matrix for the last epoch of the fold 
+# Generate ROC and confusion matrix for the last epoch of the fold
 generate_roc_and_confusion_matrix(fold_dir, fold=5, epoch=config.max_epochs)

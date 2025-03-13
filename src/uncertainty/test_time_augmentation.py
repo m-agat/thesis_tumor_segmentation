@@ -5,16 +5,27 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 
+
 def get_augmentations():
     """
     Define reversible augmentations for TTA.
     """
     augmentations = [
-        {"aug": Flipd(keys=["image"], spatial_axis=0), "inverse": Flipd(keys=["image"], spatial_axis=0)},
-        {"aug": Flipd(keys=["image"], spatial_axis=1), "inverse": Flipd(keys=["image"], spatial_axis=1)},
-        {"aug": Flipd(keys=["image"], spatial_axis=2), "inverse": Flipd(keys=["image"], spatial_axis=2)},
+        {
+            "aug": Flipd(keys=["image"], spatial_axis=0),
+            "inverse": Flipd(keys=["image"], spatial_axis=0),
+        },
+        {
+            "aug": Flipd(keys=["image"], spatial_axis=1),
+            "inverse": Flipd(keys=["image"], spatial_axis=1),
+        },
+        {
+            "aug": Flipd(keys=["image"], spatial_axis=2),
+            "inverse": Flipd(keys=["image"], spatial_axis=2),
+        },
     ]
     return augmentations
+
 
 def apply_augmentation(image, aug, visualize=False):
     """
@@ -38,6 +49,7 @@ def apply_augmentation(image, aug, visualize=False):
 
     return augmented_image
 
+
 def reverse_augmentation(output, inverse_aug):
     """
     Reverse the augmentation applied to the output.
@@ -51,6 +63,7 @@ def reverse_augmentation(output, inverse_aug):
     reversed_data = inverse_aug(data)
     reversed_output = reversed_data["image"].unsqueeze(0).numpy()  # Add batch dimension
     return reversed_output
+
 
 def tta_variance(model_inferer, input_data, device, n_iterations=10):
     """
@@ -93,16 +106,17 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10):
 
     return mean_output, variance_output
 
+
 def tta_entropy(model_inferer, input_data, device, n_iterations=10):
     """
     Run test-time dropout to estimate uncertainty (entropy-based).
-    
+
     Args:
         model: Trained model with dropout layers.
         input_data: Input image tensor.
         model_inferer: Inference function (e.g., sliding window inference).
         n_iterations: Number of times to run inference with dropout active.
-        
+
     Returns:
         mean_output: Averaged prediction over all iterations.
         variance_output: Variance of predictions across iterations.
@@ -137,23 +151,29 @@ def tta_entropy(model_inferer, input_data, device, n_iterations=10):
     # Compute entropy: -p * log(p)
     epsilon = 1e-6  # To avoid log(0)
     entropy_output = -np.sum(mean_output * np.log(mean_output + epsilon), axis=0)
-    
+
     return mean_output, entropy_output
 
-def visualize_augmentation(original_slice, augmented_slice, slice_index, save_path="./augmentation_visualizations"):
+
+def visualize_augmentation(
+    original_slice,
+    augmented_slice,
+    slice_index,
+    save_path="./augmentation_visualizations",
+):
     """
     Visualize the original and augmented slices side by side.
     """
     os.makedirs(save_path, exist_ok=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    axes[0].imshow(original_slice, cmap='gray')
-    axes[0].set_title(f'Original Slice {slice_index}')
-    axes[0].axis('off')
+    axes[0].imshow(original_slice, cmap="gray")
+    axes[0].set_title(f"Original Slice {slice_index}")
+    axes[0].axis("off")
 
-    axes[1].imshow(augmented_slice, cmap='gray')
-    axes[1].set_title(f'Augmented Slice {slice_index}')
-    axes[1].axis('off')
+    axes[1].imshow(augmented_slice, cmap="gray")
+    axes[1].set_title(f"Augmented Slice {slice_index}")
+    axes[1].axis("off")
 
     plt.savefig(os.path.join(save_path, f"augmentation_slice_{slice_index}.png"))
     plt.close(fig)

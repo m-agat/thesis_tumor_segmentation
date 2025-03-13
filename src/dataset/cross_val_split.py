@@ -14,7 +14,7 @@ data_info_path = "/home/magata/data/brats2021challenge/brats2021_class_presence_
 data = pd.read_csv(data_info_path)
 
 # Separate data by region combination
-region_groups = data.groupby('Region Combination')
+region_groups = data.groupby("Region Combination")
 
 # Reserve test samples
 test_samples = []
@@ -22,20 +22,17 @@ remaining_data = []
 
 # Ensure rare combinations are in the test set
 for region, group in region_groups:
-    if region in ['0-1-1', '1-1-0']:  # Rare combinations
+    if region in ["0-1-1", "1-1-0"]:  # Rare combinations
         # Reserve at least 5 samples for rare combinations (or fewer if not enough)
         test_samples.append(group.sample(min(len(group), 5), random_state=42))
         remaining_data.append(group.drop(test_samples[-1].index))
     elif region == "0-1-0":
         test_samples.append(group.sample(1, random_state=42))
         remaining_data.append(group.drop(test_samples[-1].index))
-    elif region == '1-1-1':  # Most common combination
+    elif region == "1-1-1":  # Most common combination
         # Allocate 80% to train/val and 15% to test
         common_train, common_test = train_test_split(
-            group,
-            test_size=0.15,
-            random_state=42,
-            stratify=group['Region Combination']
+            group, test_size=0.15, random_state=42, stratify=group["Region Combination"]
         )
         test_samples.append(common_test)
         remaining_data.append(common_train)
@@ -53,39 +50,45 @@ skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
 folds_data = {"training": [], "validation": [], "test": []}
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(train_val, train_val['Region Combination'])):
+for fold, (train_idx, val_idx) in enumerate(
+    skf.split(train_val, train_val["Region Combination"])
+):
     train_patients = []
     val_patients = []
-    
+
     for idx in train_idx:
         sample = train_val.iloc[idx]
         train_patients.append(sample["Patient"])
-        folds_data["training"].append({
-            "fold": fold,
-            "image": [
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_flair.nii.gz",
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1ce.nii.gz",
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1.nii.gz",
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t2.nii.gz"
-            ],
-            "label": f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_seg.nii.gz",
-            "region_combination": sample["Region Combination"]
-        })
-    
+        folds_data["training"].append(
+            {
+                "fold": fold,
+                "image": [
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_flair.nii.gz",
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1ce.nii.gz",
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1.nii.gz",
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t2.nii.gz",
+                ],
+                "label": f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_seg.nii.gz",
+                "region_combination": sample["Region Combination"],
+            }
+        )
+
     for idx in val_idx:
         sample = train_val.iloc[idx]
         val_patients.append(sample["Patient"])
-        folds_data["validation"].append({
-            "fold": fold,
-            "image": [
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_flair.nii.gz",
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1ce.nii.gz",
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1.nii.gz",
-                f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t2.nii.gz"
-            ],
-            "label": f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_seg.nii.gz",
-            "region_combination": sample["Region Combination"]
-        })
+        folds_data["validation"].append(
+            {
+                "fold": fold,
+                "image": [
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_flair.nii.gz",
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1ce.nii.gz",
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t1.nii.gz",
+                    f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_t2.nii.gz",
+                ],
+                "label": f"RelabeledTrainingData/{sample['Patient']}/{sample['Patient']}_seg.nii.gz",
+                "region_combination": sample["Region Combination"],
+            }
+        )
 
     print(f"Fold {fold}:")
     print(f"  Train split: {len(train_patients)} patients")
@@ -93,16 +96,18 @@ for fold, (train_idx, val_idx) in enumerate(skf.split(train_val, train_val['Regi
 
 # Add test set to folds_data
 for idx, row in test.iterrows():
-    folds_data["test"].append({
-        "image": [
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_flair.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1ce.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1.nii.gz",
-            f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t2.nii.gz"
-        ],
-        "label": f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_seg.nii.gz",
-        "region_combination": row["Region Combination"]
-    })
+    folds_data["test"].append(
+        {
+            "image": [
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_flair.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1ce.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t1.nii.gz",
+                f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_t2.nii.gz",
+            ],
+            "label": f"RelabeledTrainingData/{row['Patient']}/{row['Patient']}_seg.nii.gz",
+            "region_combination": row["Region Combination"],
+        }
+    )
 
 # Save to JSON file
 output_dir = "/home/magata/data/brats2021challenge/splits/"
