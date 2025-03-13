@@ -20,6 +20,7 @@ from monai.inferers import sliding_window_inference
 
 # PyTorch Utilities
 from torch.utils.tensorboard import SummaryWriter
+import gc 
 
 def cross_validate_trainer(
     model_class,  # Pass the model class so that a new instance is created for each fold
@@ -49,6 +50,11 @@ def cross_validate_trainer(
         print(f"Data loaders for fold {fold} loaded.\n")
         
         # Create a new model for each fold
+        print(f"Reinitializing model for Fold {fold + 1}/{num_folds}")
+        del model
+        torch.cuda.empty_cache()
+        gc.collect()
+
         model = model_class().to(config.device)
         optimizer = optimizer_func(model.parameters())  
         scheduler = scheduler_func(optimizer) 
@@ -109,6 +115,7 @@ def cross_validate_trainer(
         fold_results.append(metrics_history)
 
         # Close the writer for this fold
+        writer.flush()
         writer.close()
 
         torch.cuda.empty_cache()

@@ -10,9 +10,6 @@ import torch
 from torch.utils.data import DataLoader, Subset
 sys.path.append("../")
 import dataset.dataloaders as dataloaders
-import dataset.dataloaders_crossval as dataloaders_cv
-import dataset.transforms as transforms 
-import numpy as np
 
 # ---------------------------------
 # 1. Configuration File Loaders
@@ -87,7 +84,7 @@ config = load_config()
 # Root directories and paths
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 root_dir = args.data_path or config.get("root_dir", "/home/magata/data/brats2021challenge")
-json_path = args.data_path or config.get("json_path", "/home/magata/data/brats2021challenge/splits/data_splits.json")
+json_path = args.data_path or config.get("json_path", "/home/magata/data/brats2021challenge/splits/final_training_splits.json")
 
 train_folder = convert_path(os.path.join(root_dir, config.get("train_subdir", "split/train")))
 val_folder = convert_path(os.path.join(root_dir, config.get("val_subdir", "split/val")))

@@ -48,18 +48,12 @@ def scheduler_func(optimizer):
 post_activation = Activations(softmax=True) # Softmax for multi-class output
 post_pred = AsDiscrete(argmax=True, to_onehot=4) # get the class with the highest prob for each channel
 
-# Hyperparmeter tuning 
-hyperparameter_space = {
-    "learning_rate": [1e-4, 3e-4, 5e-4, 1e-3],
-    "optimizer": ["AdamW", "SGD"],
-    "weight_decay": [1e-5, 1e-4],
-}
-
-configs = random.sample(list(itertools.product(
-    hyperparameter_space["learning_rate"],
-    hyperparameter_space["optimizer"],
-    hyperparameter_space["weight_decay"]
-)), 10)
+configs = [
+    (1e-4, "AdamW", 1e-5),  # Configuration A (Baseline as per MONAI tutorial)
+    (1e-4, "AdamW", 1e-4),  # Configuration B (Same LR with increased weight decay)
+    (1e-3, "SGD", 1e-5),     # Configuration C (Using SGD with a higher LR, lower weight decay)
+    (1e-3, "SGD", 1e-4)      # Configuration D (Using SGD with a higher LR and increased weight decay)
+]
 
 # Store results for each configuration
 tuning_results = []
@@ -77,7 +71,7 @@ for idx, (lr, opt, wd) in enumerate(configs):
         
     # Perform cross-validation for this configuration
     fold_results, avg_metrics = cross_validate_trainer(
-        model_class=lambda: models.models_dict[f"{config.model_name}_model.pt"],
+        model_class=models.models_dict[f"{config.model_name}_model.pt"],
         optimizer_func=optimizer_func,
         loss_func=loss_func,
         acc_func=dice_acc,
@@ -103,7 +97,7 @@ tuning_results.sort(key=lambda x: x["avg_dice"], reverse=True)
 tuning_results = convert_to_serializable(tuning_results)
 
 # Save tuning results to JSON
-tuning_results_path = os.path.join(config.output_dir, "hyperparameter_tuning_results.json")
+tuning_results_path = os.path.join(config.output_dir, f"{config.model_name}_hyperparameter_tuning_results.json")
 with open(tuning_results_path, "w") as f:
     json.dump(tuning_results, f, indent=4)
 

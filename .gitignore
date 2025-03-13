@@ -26,6 +26,9 @@ figures/
 *.csv
 *.pkl
 *.zip
+*.tar.gz
+*.tar
+events.out.tfevents.*
 
 # C extensions
 *.so
