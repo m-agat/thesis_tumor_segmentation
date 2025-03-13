@@ -28,6 +28,7 @@ figures/
 *.zip
 *.tar.gz
 *.tar
+events.out.tfevents.*
 
 # C extensions
 *.so
