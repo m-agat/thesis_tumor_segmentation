@@ -11,9 +11,9 @@ from monai.metrics import DiceMetric
 from monai.utils.enums import MetricReduction
 from scipy.ndimage import center_of_mass
 import time
-import pandas as pd 
-import json 
-import re 
+import pandas as pd
+import json
+import re
 
 # Add custom modules
 sys.path.append("../")
@@ -24,6 +24,7 @@ from utils.utils import AverageMeter
 #####################
 #### Load Models ####
 #####################
+
 
 def load_model(model_class, checkpoint_path, device):
     """
@@ -98,38 +99,48 @@ def save_segmentation_as_nifti(
 #### Gather performance metrics ########
 ########################################
 
+
 def compute_metrics(pred, gt):
     """
     Compute Dice, HD95, Sensitivity, and Specificity for segmentation predictions.
     """
-    dice_metric = DiceMetric(include_background=False, reduction=MetricReduction.NONE, get_not_nans=True)
-    confusion_metric = ConfusionMatrixMetric(include_background=False, metric_name=["sensitivity", "specificity"], reduction="none", compute_sample=False)
-    
+    dice_metric = DiceMetric(
+        include_background=False, reduction=MetricReduction.NONE, get_not_nans=True
+    )
+    confusion_metric = ConfusionMatrixMetric(
+        include_background=False,
+        metric_name=["sensitivity", "specificity"],
+        reduction="none",
+        compute_sample=False,
+    )
+
     pred_stack = torch.stack(pred)
     gt_stack = torch.stack(gt)
-    
+
     # Compute Dice Scores
     dice_metric(y_pred=pred, y=gt)
     dice_scores, not_nans = dice_metric.aggregate()
     dice_scores = dice_scores.cpu().numpy()
-    
+
     # Compute HD95
-    hd95 = compute_hausdorff_distance(y_pred=pred_stack, y=gt_stack, include_background=False, distance_metric="euclidean", percentile=95)
+    hd95 = compute_hausdorff_distance(
+        y_pred=pred_stack,
+        y=gt_stack,
+        include_background=False,
+        distance_metric="euclidean",
+        percentile=95,
+    )
     hd95 = hd95.squeeze(0).cpu().numpy()
     for i in range(len(hd95)):
         pred_empty = torch.sum(torch.stack(pred), dim=[1, 2, 3, 4])[i].item() == 0
         gt_empty = not_nans[i] == 0
 
         if pred_empty and gt_empty:
-            print(
-                f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0."
-            )
+            print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
             hd95[i] = 0.0
 
         elif gt_empty and not pred_empty:  # Tissue is absent in ground truth
-            pred_array = (
-                torch.stack(pred)[:, i].cpu().numpy()
-            )  # Convert to NumPy
+            pred_array = torch.stack(pred)[:, i].cpu().numpy()  # Convert to NumPy
             if np.sum(pred_array) > 0:
                 # Compute Center of Mass for the predicted mask
                 com = center_of_mass(pred_array)
@@ -141,9 +152,7 @@ def compute_metrics(pred, gt):
 
                 # Convert CoM mask back to tensor
                 com_mask_tensor = (
-                    torch.from_numpy(com_mask)
-                    .to(torch.float32)
-                    .to(config.device)
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
                 )
 
                 # Compute Hausdorff Distance between prediction and CoM mask
@@ -176,9 +185,7 @@ def compute_metrics(pred, gt):
 
                 # Convert CoM mask back to tensor
                 com_mask_tensor = (
-                    torch.from_numpy(com_mask)
-                    .to(torch.float32)
-                    .to(config.device)
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
                 )
 
                 # Compute Hausdorff Distance between GT CoM and empty prediction
@@ -200,13 +207,13 @@ def compute_metrics(pred, gt):
             else:
                 print(f"Warning: GT mask for region {i} is unexpectedly empty.")
                 hd95[i] = 0.0
-    
+
     # Compute Sensitivity & Specificity
     confusion_metric(y_pred=pred, y=gt)
     sensitivity, specificity = confusion_metric.aggregate()
     sensitivity = sensitivity.squeeze(0).cpu().numpy()
     specificity = specificity.squeeze(0).cpu().numpy()
-    
+
     return dice_scores, hd95, sensitivity, specificity
 
 
@@ -215,12 +222,13 @@ def compute_metrics(pred, gt):
 ########################################
 def extract_patient_id(path):
     # Use regular expression to find all numbers in the path
-    numbers = re.findall('\d+', path)
-    
+    numbers = re.findall("\d+", path)
+
     # Assuming the patient ID is the last number found
     patient_id = numbers[-1]
-    
+
     return patient_id
+
 
 def save_metrics_csv(metrics_list, filename):
     """
@@ -228,20 +236,25 @@ def save_metrics_csv(metrics_list, filename):
     """
     df = pd.DataFrame(metrics_list)
     df.to_csv(filename, index=False)
-    
+
     print(f"Saved patient-wise metrics to {filename}")
+
 
 def save_average_metrics(metrics_list, filename):
     """
     Save the average test set performance in a JSON file.
     """
-    avg_metrics = {key: float(np.mean([m[key] for m in metrics_list])) 
-                   for key in metrics_list[0] if key != "patient_id"}
-    
+    avg_metrics = {
+        key: float(np.mean([m[key] for m in metrics_list]))
+        for key in metrics_list[0]
+        if key != "patient_id"
+    }
+
     with open(filename, "w") as f:
         json.dump(avg_metrics, f, indent=4)
 
     print(f"Saved average test set metrics to {filename}")
+
 
 def ensemble_segmentation(
     test_loader, models_dict, patient_id=None, output_dir="./output_segmentations"
@@ -268,13 +281,15 @@ def ensemble_segmentation(
     with torch.no_grad():
         for batch_data in test_data_loader:
             image = batch_data["image"].to(config.device)
-            reference_image_path = batch_data["path"][
-                0
-            ]  
+            reference_image_path = batch_data["path"][0]
             patient_id = extract_patient_id(reference_image_path)
-            gt = batch_data["label"].to(config.device) # shape: (batch_size, 240, 240, 155)
+            gt = batch_data["label"].to(
+                config.device
+            )  # shape: (batch_size, 240, 240, 155)
 
-            print(f"\nProcessing patient: {patient_id}\n",)
+            print(
+                f"\nProcessing patient: {patient_id}\n",
+            )
 
             # Collect logits from each model
             logits_list = []
@@ -290,7 +305,11 @@ def ensemble_segmentation(
             )  # Shape: (num_classes, H, W, D)
 
             # Apply softmax and convert to segmentation map
-            seg = torch.nn.functional.softmax(avg_logits, dim=0).argmax(dim=0).unsqueeze(0) # Shape: (H, W, D)
+            seg = (
+                torch.nn.functional.softmax(avg_logits, dim=0)
+                .argmax(dim=0)
+                .unsqueeze(0)
+            )  # Shape: (H, W, D)
 
             pred_one_hot = [(seg == i).float() for i in range(1, 4)]
             gt_one_hot = [(gt == i).float() for i in range(1, 4)]
@@ -302,7 +321,9 @@ def ensemble_segmentation(
             # print(f"Length of pred_one_hot: {len(pred_one_hot)}")
             # print(f"Length of gt_one_hot: {len(gt_one_hot)}")
 
-            dice, hd95, sensitivity, specificity = compute_metrics(pred_one_hot, gt_one_hot)
+            dice, hd95, sensitivity, specificity = compute_metrics(
+                pred_one_hot, gt_one_hot
+            )
             print(
                 f"Dice NCR: {dice[0].item():.4f}, Dice ED: {dice[1].item():.4f}, Dice ET: {dice[2].item():.4f}\n",
                 f"HD95 NCR: {hd95[0].item():.2f}, HD95 ED: {hd95[1].item():.2f}, HD95 ET: {hd95[2].item():.2f}\n",
@@ -310,13 +331,27 @@ def ensemble_segmentation(
                 f"Specificity NCR: {specificity[0].item():.4f}, ED: {specificity[1].item():.4f}, ET: {specificity[2].item():.4f}\n",
             )
 
-            patient_metrics.append({
-                "patient_id": patient_id,
-                "Dice NCR": dice[0].item(), "Dice ED": dice[1].item(), "Dice ET": dice[2].item(), "Dice overall": np.mean(dice),
-                "HD95 NCR": hd95[0].item(), "HD95 ED": hd95[1].item(), "HD95 ET": hd95[2].item(), "HD95 overall": np.mean(hd95),
-                "Sensitivity NCR": sensitivity[0].item(), "Sensitivity ED": sensitivity[1].item(), "Sensitivity ET": sensitivity[2].item(), "Sensitivity overall": np.mean(sensitivity),
-                "Specificity NCR": specificity[0].item(), "Specificity ED": specificity[1].item(), "Specificity ET": specificity[2].item(), "Specificity overall": np.mean(specificity),
-            })
+            patient_metrics.append(
+                {
+                    "patient_id": patient_id,
+                    "Dice NCR": dice[0].item(),
+                    "Dice ED": dice[1].item(),
+                    "Dice ET": dice[2].item(),
+                    "Dice overall": np.mean(dice),
+                    "HD95 NCR": hd95[0].item(),
+                    "HD95 ED": hd95[1].item(),
+                    "HD95 ET": hd95[2].item(),
+                    "HD95 overall": np.mean(hd95),
+                    "Sensitivity NCR": sensitivity[0].item(),
+                    "Sensitivity ED": sensitivity[1].item(),
+                    "Sensitivity ET": sensitivity[2].item(),
+                    "Sensitivity overall": np.mean(sensitivity),
+                    "Specificity NCR": specificity[0].item(),
+                    "Specificity ED": specificity[1].item(),
+                    "Specificity ET": specificity[2].item(),
+                    "Specificity overall": np.mean(specificity),
+                }
+            )
 
             seg = seg.squeeze(0)
 
@@ -333,12 +368,13 @@ def ensemble_segmentation(
     csv_path = os.path.join(output_dir, "simple_avg_patient_metrics.csv")
     json_path = os.path.join(output_dir, "simple_avg_average_metrics.json")
     save_metrics_csv(patient_metrics, csv_path)
-    save_average_metrics(patient_metrics, json_path) 
+    save_average_metrics(patient_metrics, json_path)
 
 
 ####################################
 #### Visualize Segmentation ####
 ####################################
+
 
 def visualize_segmentation(segmentation, patient_id):
     """
@@ -365,6 +401,4 @@ def visualize_segmentation(segmentation, patient_id):
 if __name__ == "__main__":
     patient_id = "01556"
     models_dict = load_all_models()
-    ensemble_segmentation(
-        config.test_loader, models_dict, patient_id=patient_id
-    )
+    ensemble_segmentation(config.test_loader, models_dict, patient_id=patient_id)
