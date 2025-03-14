@@ -353,7 +353,7 @@ def ensemble_segmentation(
                 }
             )
 
-            seg = seg.squeeze(0)
+            seg = seg.squeeze(0) # remove batch dimension
 
             # Save segmentation
             output_path = os.path.join(output_dir, f"segmentation_{patient_id}.nii.gz")
