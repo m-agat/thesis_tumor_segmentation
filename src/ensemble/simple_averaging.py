@@ -257,7 +257,7 @@ def save_average_metrics(metrics_list, filename):
 
 
 def ensemble_segmentation(
-    test_loader, models_dict, patient_id=None, output_dir="./output_segmentations"
+    test_loader, models_dict, patient_id=None, output_dir="./output_segmentations/simple_avg"
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
