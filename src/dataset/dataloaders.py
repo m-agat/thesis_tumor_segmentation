@@ -43,11 +43,13 @@ def load_folds_data(json_path, basedir, fold=None, use_final_split=False):
         for entry in data["training"]:
             entry["image"] = [os.path.join(basedir, path) for path in entry["image"]]
             entry["label"] = os.path.join(basedir, entry["label"])
+            entry["path"] = entry["label"]
             training_files.append(entry)
 
         for entry in data["validation"]:
             entry["image"] = [os.path.join(basedir, path) for path in entry["image"]]
             entry["label"] = os.path.join(basedir, entry["label"])
+            entry["path"] = entry["label"]
             validation_files.append(entry)
     else:
         for entry in data["training"]:
@@ -56,6 +58,7 @@ def load_folds_data(json_path, basedir, fold=None, use_final_split=False):
                     os.path.join(basedir, path) for path in entry["image"]
                 ]
                 entry["label"] = os.path.join(basedir, entry["label"])
+                entry["path"] = entry["label"]
                 training_files.append(entry)
 
         for entry in data["validation"]:
@@ -64,6 +67,7 @@ def load_folds_data(json_path, basedir, fold=None, use_final_split=False):
                     os.path.join(basedir, path) for path in entry["image"]
                 ]
                 entry["label"] = os.path.join(basedir, entry["label"])
+                entry["path"] = entry["label"]
                 validation_files.append(entry)
 
     return training_files, validation_files
