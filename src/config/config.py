@@ -150,10 +150,12 @@ model_paths = {
         "best_segresnet_model.pt",
     ),
     "attunet": os.path.join(
-        args.attunet_path or "/home/magata/results/attunet", "best_attunet_model.pt"
+        args.attunet_path or "/home/magata/results/attunet", 
+        "best_attunet_model.pt"
     ),
     "vnet": os.path.join(
-        args.vnet_path or "/home/magata/results/vnet", "best_vnet_model.pt"
+        args.vnet_path or "/home/magata/results/vnet", 
+        "best_vnet_model.pt"
     ),
 }
 
