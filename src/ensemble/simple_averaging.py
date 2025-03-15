@@ -245,7 +245,7 @@ def save_average_metrics(metrics_list, filename):
     Save the average test set performance in a JSON file.
     """
     avg_metrics = {
-        key: float(np.mean([m[key] for m in metrics_list]))
+        key: float(np.nanmean([m[key] for m in metrics_list]))
         for key in metrics_list[0]
         if key != "patient_id"
     }
@@ -337,19 +337,19 @@ def ensemble_segmentation(
                     "Dice NCR": dice[0].item(),
                     "Dice ED": dice[1].item(),
                     "Dice ET": dice[2].item(),
-                    "Dice overall": np.mean(dice),
+                    "Dice overall": np.nanmean(dice),
                     "HD95 NCR": hd95[0].item(),
                     "HD95 ED": hd95[1].item(),
                     "HD95 ET": hd95[2].item(),
-                    "HD95 overall": np.mean(hd95),
+                    "HD95 overall": np.nanmean(hd95),
                     "Sensitivity NCR": sensitivity[0].item(),
                     "Sensitivity ED": sensitivity[1].item(),
                     "Sensitivity ET": sensitivity[2].item(),
-                    "Sensitivity overall": np.mean(sensitivity),
+                    "Sensitivity overall": np.nanmean(sensitivity),
                     "Specificity NCR": specificity[0].item(),
                     "Specificity ED": specificity[1].item(),
                     "Specificity ET": specificity[2].item(),
-                    "Specificity overall": np.mean(specificity),
+                    "Specificity overall": np.nanmean(specificity),
                 }
             )
 
