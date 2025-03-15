@@ -381,7 +381,7 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "01224"
+    patient_id = "01556"
     _, val_loader = dataloaders.get_loaders(
         batch_size=config.batch_size,
         json_path=config.json_path,
@@ -393,4 +393,4 @@ if __name__ == "__main__":
     model, model_inferer = load_model(
             models.swinunetr_model, config.model_paths["swinunetr"], config.device
         )
-    performance_estimation(val_loader, model_inferer, patient_id=patient_id)
+    performance_estimation(config.test_loader, model_inferer, patient_id=patient_id)
