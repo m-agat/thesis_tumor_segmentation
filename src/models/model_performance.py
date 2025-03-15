@@ -95,18 +95,19 @@ def compute_metrics(pred, gt):
         compute_sample=False,
     )
 
+    # Convert MetaTensors to plain tensors if needed.
     pred = [p.detach().clone() if hasattr(p, "detach") else p for p in pred]
     gt = [g.detach().clone() if hasattr(g, "detach") else g for g in gt]
 
     pred_stack = torch.stack(pred)
     gt_stack = torch.stack(gt)
 
-    # Compute Dice Scores
+    # Compute Dice Scores.
     dice_metric(y_pred=pred, y=gt)
     dice_scores, not_nans = dice_metric.aggregate()
     dice_scores = dice_scores.cpu().numpy()
 
-    # Compute HD95
+    # Compute HD95.
     hd95 = compute_hausdorff_distance(
         y_pred=pred_stack,
         y=gt_stack,
@@ -115,76 +116,63 @@ def compute_metrics(pred, gt):
         percentile=95,
     )
     hd95 = hd95.squeeze(0).cpu().numpy()
+
     for i in range(len(hd95)):
-        pred_empty = torch.sum(torch.stack(pred), dim=[1, 2, 3, 4])[i].item() == 0
+        # Use the i-th class mask directly.
+        pred_empty = torch.sum(pred[i]).item() == 0
         gt_empty = not_nans[i] == 0
 
         if pred_empty and gt_empty:
             print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
             hd95[i] = 0.0
 
-        elif gt_empty and not pred_empty:  # Tissue is absent in ground truth
-            pred_array = torch.stack(pred)[:, i].cpu().numpy()  # Convert to NumPy
+        elif gt_empty and not pred_empty:  # Ground truth is absent.
+            pred_array = pred[i].cpu().numpy()  # Use pred[i] directly.
             if np.sum(pred_array) > 0:
-                # Compute Center of Mass for the predicted mask
+                # Compute Center of Mass for the predicted mask.
                 com = center_of_mass(pred_array)
                 com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                com_coords = tuple(
-                    map(int, map(round, com))
-                )  # Round and convert to integer indices
+                com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
 
-                # Convert CoM mask back to tensor
-                com_mask_tensor = (
-                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                )
+                # Convert CoM mask back to tensor.
+                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                # Compute Hausdorff Distance between prediction and CoM mask
+                # Compute Hausdorff Distance between prediction and CoM mask.
                 mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[:, i].unsqueeze(0),
+                    y_pred=pred[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
                     include_background=False,
                     distance_metric="euclidean",
                     percentile=95,
                 )
-
                 print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
                 print(f"Before update, hd95: {hd95}")
                 hd95[i] = mock_val.item()
                 print(f"After update, hd95: {hd95}")
             else:
-                # No prediction or GT; HD95 = 0
                 hd95[i] = 0.0
 
-        elif pred_empty and not gt_empty:  # Model predicts tissue is absent
-            gt_array = torch.stack(pred)[:, i].cpu().numpy()
+        elif pred_empty and not gt_empty:  # Prediction is absent.
+            gt_array = gt[i].cpu().numpy()  # Use gt[i] directly.
             if np.sum(gt_array) > 0:
-                # Compute Center of Mass for the GT mask
+                # Compute Center of Mass for the GT mask.
                 com = center_of_mass(gt_array)
                 com_mask = np.zeros_like(gt_array, dtype=np.uint8)
-                com_coords = tuple(
-                    map(int, map(round, com))
-                )  # Round and convert to integer indices
+                com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
 
-                # Convert CoM mask back to tensor
-                com_mask_tensor = (
-                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                )
+                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                # Compute Hausdorff Distance between GT CoM and empty prediction
+                # Compute Hausdorff Distance between empty prediction and GT CoM mask.
                 mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[:, i].unsqueeze(0),
+                    y_pred=gt[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
                     include_background=False,
                     distance_metric="euclidean",
                     percentile=95,
                 )
-
-                print(
-                    f"Mock HD95 for region {i} (Prediction absent):",
-                    mock_val.item(),
-                )
+                print(f"Mock HD95 for region {i} (Prediction absent):", mock_val.item())
                 print(f"Before update, hd95: {hd95}")
                 hd95[i] = mock_val.item()
                 print(f"After update, hd95: {hd95}")
@@ -192,7 +180,7 @@ def compute_metrics(pred, gt):
                 print(f"Warning: GT mask for region {i} is unexpectedly empty.")
                 hd95[i] = 0.0
 
-    # Compute Sensitivity & Specificity
+    # Compute Sensitivity & Specificity.
     confusion_metric(y_pred=pred, y=gt)
     sensitivity, specificity = confusion_metric.aggregate()
     sensitivity = sensitivity.squeeze(0).cpu().numpy()
@@ -297,6 +285,8 @@ def performance_estimation(
                 gt_one_hot = [ (gt == i).float() for i in range(1, 4) ]
                 gt_one_hot = torch.stack(gt_one_hot)
 
+            print("GT shape: ", gt_one_hot.shape)
+
             # print(f"Shape of seg: {seg.shape}")
             # print(f"Shape of gt: {gt.shape}")
             # print(f"Unique values in seg: {torch.unique(seg)}")
@@ -381,7 +371,7 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "01556"
+    patient_id = "01548"
     _, val_loader = dataloaders.get_loaders(
         batch_size=config.batch_size,
         json_path=config.json_path,
@@ -393,4 +383,4 @@ if __name__ == "__main__":
     model, model_inferer = load_model(
             models.swinunetr_model, config.model_paths["swinunetr"], config.device
         )
-    performance_estimation(config.test_loader, model_inferer, patient_id=patient_id)
+    performance_estimation(val_loader, model_inferer, patient_id=patient_id)
