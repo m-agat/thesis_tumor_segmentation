@@ -64,6 +64,30 @@ def load_all_models():
         ),
     }
 
+#####################
+#### Load Weights ####
+#####################
+
+def load_weights(performance_weights_path):
+    with open(performance_weights_path) as f:
+        performance = json.load(f)
+    return performance 
+
+##############################
+#### Compute Weighted Scores ##
+##############################
+
+def compute_composite_scores(metrics, weights):
+    """Compute weighted composite scores for a model."""
+    composite_scores = {}
+    for region in ["NCR", "ED", "ET"]:
+        normalized_hd95 = 1 / (1 + metrics[f"HD95 {region}"])  
+        composite_scores[region] = (
+            weights["Dice"] * metrics[f"Dice {region}"] +
+            weights["HD95"] * normalized_hd95 +
+            weights["Sensitivity"] * metrics[f"Sensitivity {region}"]
+        )
+    return composite_scores
 
 #############################
 #### Save Segmentation ######
@@ -114,15 +138,19 @@ def compute_metrics(pred, gt):
         compute_sample=False,
     )
 
+    # Convert MetaTensors to plain tensors if needed.
+    pred = [p.detach().clone() if hasattr(p, "detach") else p for p in pred]
+    gt = [g.detach().clone() if hasattr(g, "detach") else g for g in gt]
+
     pred_stack = torch.stack(pred)
     gt_stack = torch.stack(gt)
 
-    # Compute Dice Scores
+    # Compute Dice Scores.
     dice_metric(y_pred=pred, y=gt)
     dice_scores, not_nans = dice_metric.aggregate()
     dice_scores = dice_scores.cpu().numpy()
 
-    # Compute HD95
+    # Compute HD95.
     hd95 = compute_hausdorff_distance(
         y_pred=pred_stack,
         y=gt_stack,
@@ -131,75 +159,60 @@ def compute_metrics(pred, gt):
         percentile=95,
     )
     hd95 = hd95.squeeze(0).cpu().numpy()
+
     for i in range(len(hd95)):
-        pred_empty = torch.sum(torch.stack(pred), dim=[1, 2, 3, 4])[i].item() == 0
+        # Use the i-th class mask directly.
+        pred_empty = torch.sum(pred[i]).item() == 0
         gt_empty = not_nans[i] == 0
 
         if pred_empty and gt_empty:
             print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
             hd95[i] = 0.0
 
-        elif gt_empty and not pred_empty:  # Tissue is absent in ground truth
-            pred_array = torch.stack(pred)[:, i].cpu().numpy()  # Convert to NumPy
+        elif gt_empty and not pred_empty:  # Ground truth is absent.
+            pred_array = pred[i].cpu().numpy()  # Use pred[i] directly.
             if np.sum(pred_array) > 0:
-                # Compute Center of Mass for the predicted mask
+                # Compute Center of Mass for the predicted mask.
                 com = center_of_mass(pred_array)
                 com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                com_coords = tuple(
-                    map(int, map(round, com))
-                )  # Round and convert to integer indices
+                com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
 
-                # Convert CoM mask back to tensor
-                com_mask_tensor = (
-                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                )
+                # Convert CoM mask back to tensor.
+                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                # Compute Hausdorff Distance between prediction and CoM mask
+                # Compute Hausdorff Distance between prediction and CoM mask.
                 mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[:, i].unsqueeze(0),
+                    y_pred=pred[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
                     include_background=False,
                     distance_metric="euclidean",
                     percentile=95,
                 )
-
-                print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
                 print(f"Before update, hd95: {hd95}")
                 hd95[i] = mock_val.item()
                 print(f"After update, hd95: {hd95}")
             else:
-                # No prediction or GT; HD95 = 0
                 hd95[i] = 0.0
 
-        elif pred_empty and not gt_empty:  # Model predicts tissue is absent
-            gt_array = torch.stack(pred)[:, i].cpu().numpy()
+        elif pred_empty and not gt_empty:  # Prediction is absent.
+            gt_array = gt[i].cpu().numpy()  # Use gt[i] directly.
             if np.sum(gt_array) > 0:
-                # Compute Center of Mass for the GT mask
+                # Compute Center of Mass for the GT mask.
                 com = center_of_mass(gt_array)
                 com_mask = np.zeros_like(gt_array, dtype=np.uint8)
-                com_coords = tuple(
-                    map(int, map(round, com))
-                )  # Round and convert to integer indices
+                com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
 
-                # Convert CoM mask back to tensor
-                com_mask_tensor = (
-                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                )
+                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
 
-                # Compute Hausdorff Distance between GT CoM and empty prediction
+                # Compute Hausdorff Distance between empty prediction and GT CoM mask.
                 mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[:, i].unsqueeze(0),
+                    y_pred=gt[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
                     include_background=False,
                     distance_metric="euclidean",
                     percentile=95,
-                )
-
-                print(
-                    f"Mock HD95 for region {i} (Prediction absent):",
-                    mock_val.item(),
                 )
                 print(f"Before update, hd95: {hd95}")
                 hd95[i] = mock_val.item()
@@ -208,7 +221,7 @@ def compute_metrics(pred, gt):
                 print(f"Warning: GT mask for region {i} is unexpectedly empty.")
                 hd95[i] = 0.0
 
-    # Compute Sensitivity & Specificity
+    # Compute Sensitivity & Specificity.
     confusion_metric(y_pred=pred, y=gt)
     sensitivity, specificity = confusion_metric.aggregate()
     sensitivity = sensitivity.squeeze(0).cpu().numpy()
@@ -257,7 +270,7 @@ def save_average_metrics(metrics_list, filename):
 
 
 def ensemble_segmentation(
-    test_loader, models_dict, patient_id=None, output_dir="./output_segmentations/performance_weighted"
+    test_loader, models_dict, composite_score_weights, patient_id=None, output_dir="./output_segmentations/performance_weighted"
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -291,22 +304,41 @@ def ensemble_segmentation(
                 f"\nProcessing patient: {patient_id}\n",
             )
 
-            # Collect logits from each model
-            logits_list = []
-            for model_name, (model, inferer) in models_dict.items():
-                logits = inferer(image).squeeze(
-                    0
-                )  # Remove batch dim -> (num_classes, H, W, D)
-                logits_list.append(logits)
+            # Get the performance of each model
+            model_weights = {region: {} for region in ["NCR", "ED", "ET"]}
+            for model_name in models_dict.keys():
+                performance_weights_path = f'../models/performance/{model_name}/average_metrics.json'
+                metrics = load_weights(performance_weights_path)
+                composite_scores = compute_composite_scores(metrics, composite_score_weights)
+                
+                # Assign scores per region
+                for region in ["NCR", "ED", "ET"]:
+                    model_weights[region][model_name] = composite_scores[region]
 
-            # Average the logits across all models
-            avg_logits = torch.mean(
-                torch.stack(logits_list), dim=0
-            )  # Shape: (num_classes, H, W, D)
+            # Normalize model weights per region to sum to 1
+            for region in ["NCR", "ED", "ET"]:
+                total_weight = sum(model_weights[region].values())
+                model_weights[region] = {k: v / total_weight for k, v in model_weights[region].items()}
+
+            print(f"Computed model weights per region: {model_weights}")
+
+            # Collect weighted logits from each model per region
+            weighted_logits = {region: [] for region in ["NCR", "ED", "ET"]}
+            for model_name, (model, inferer) in models_dict.items():
+                logits = inferer(image).squeeze(0)  # Shape: (num_classes, H, W, D)
+                for idx, region in enumerate(["NCR", "ED", "ET"]):
+                    weighted_logits[region].append(model_weights[region][model_name] * logits[idx])
+
+            # Compute weighted average of logits per region
+            fused_logits = torch.stack([
+                torch.sum(torch.stack(weighted_logits["NCR"]), dim=0) / sum(model_weights["NCR"].values()),  
+                torch.sum(torch.stack(weighted_logits["ED"]), dim=0) / sum(model_weights["ED"].values()),  
+                torch.sum(torch.stack(weighted_logits["ET"]), dim=0) / sum(model_weights["ET"].values())
+            ], dim=0)  # Shape: (num_classes, H, W, D)
 
             # Apply softmax and convert to segmentation map
             seg = (
-                torch.nn.functional.softmax(avg_logits, dim=0)
+                torch.nn.functional.softmax(fused_logits, dim=0)
                 .argmax(dim=0)
                 .unsqueeze(0)
             )  # Shape: (H, W, D)
@@ -390,7 +422,7 @@ def visualize_segmentation(segmentation, patient_id):
     plt.imshow(segmentation[:, :, slice_index], cmap="gray")
     plt.title(f"Segmentation Slice at Index {slice_index}")
     plt.axis("off")
-    plt.savefig(f"segmentation_{patient_id}_slice.png")
+    plt.savefig(f"perf_weigh_segmentation_{patient_id}_slice.png")
     # plt.show()
 
 
@@ -401,4 +433,10 @@ def visualize_segmentation(segmentation, patient_id):
 if __name__ == "__main__":
     patient_id = "01556"
     models_dict = load_all_models()
-    ensemble_segmentation(config.test_loader, models_dict, patient_id=patient_id)
+    composite_score_weights = {
+        "Dice": 0.6,
+        "HD95": 0.2,
+        "Sensitivity": 0.2,
+        "Specificity": 0.2
+    }
+    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights, patient_id=patient_id)
