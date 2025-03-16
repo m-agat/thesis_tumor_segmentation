@@ -390,7 +390,7 @@ def visualize_segmentation(segmentation, patient_id):
     plt.imshow(segmentation[:, :, slice_index], cmap="gray")
     plt.title(f"Segmentation Slice at Index {slice_index}")
     plt.axis("off")
-    plt.savefig(f"segmentation_{patient_id}_slice.png")
+    plt.savefig(f"simple_avg_segmentation_{patient_id}_slice.png")
     # plt.show()
 
 
