@@ -1,10 +1,29 @@
-from monai.transforms import RandSpatialCropd, Flipd, Compose
+from monai import transforms
 import numpy as np
 import torch
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 
+class ReversibleScaleIntensityd:
+    def __init__(self, keys, factor):
+        self.keys = keys
+        self.factor = factor
+
+    def __call__(self, data):
+        # Multiply by (1 + factor)
+        data["image"] = data["image"] * (1 + self.factor)
+        return data
+
+class InverseReversibleScaleIntensityd:
+    def __init__(self, keys, factor):
+        self.keys = keys
+        self.factor = factor
+
+    def __call__(self, data):
+        # Divide by (1 + factor) to reverse the scaling
+        data["image"] = data["image"] / (1 + self.factor)
+        return data
 
 def get_augmentations():
     """
@@ -12,16 +31,32 @@ def get_augmentations():
     """
     augmentations = [
         {
-            "aug": Flipd(keys=["image"], spatial_axis=0),
-            "inverse": Flipd(keys=["image"], spatial_axis=0),
+            "aug": transforms.Flipd(keys=["image"], spatial_axis=0),
+            "inverse": transforms.Flipd(keys=["image"], spatial_axis=0),
         },
         {
-            "aug": Flipd(keys=["image"], spatial_axis=1),
-            "inverse": Flipd(keys=["image"], spatial_axis=1),
+            "aug": transforms.Flipd(keys=["image"], spatial_axis=1),
+            "inverse": transforms.Flipd(keys=["image"], spatial_axis=1),
         },
         {
-            "aug": Flipd(keys=["image"], spatial_axis=2),
-            "inverse": Flipd(keys=["image"], spatial_axis=2),
+            "aug": transforms.Flipd(keys=["image"], spatial_axis=2),
+            "inverse": transforms.Flipd(keys=["image"], spatial_axis=2),
+        },
+        {
+            "aug": ReversibleScaleIntensityd(keys=["image"], factor=0.1),
+            "inverse": InverseReversibleScaleIntensityd(keys=["image"], factor=0.1),
+        },
+        {
+            "aug": transforms.ShiftIntensityd(keys="image", offset=0.1),
+            "inverse": transforms.ShiftIntensityd(keys="image", offset=-0.1),
+        },
+        {
+            "aug": transforms.RotateD(keys=["image"], angle=10, keep_size=True),
+            "inverse": transforms.RotateD(keys=["image"], angle=-10, keep_size=True),
+        },
+        {
+            "aug": transforms.RotateD(keys=["image"], angle=-10, keep_size=True),
+            "inverse": transforms.RotateD(keys=["image"], angle=10, keep_size=True),
         },
     ]
     return augmentations

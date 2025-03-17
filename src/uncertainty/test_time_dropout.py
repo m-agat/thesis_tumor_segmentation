@@ -18,7 +18,7 @@ def enable_dropout(model):
             module.train()
 
 
-def ttd_variance(model, input_data, model_inferer, n_iterations=20):
+def ttd_variance(model, model_inferer, input_data, device, n_iterations=20):
     """
     Run test-time dropout to estimate uncertainty.
 
@@ -38,7 +38,7 @@ def ttd_variance(model, input_data, model_inferer, n_iterations=20):
     all_outputs = []
     with torch.no_grad(), torch.cuda.amp.autocast():
         for _ in tqdm(range(n_iterations), desc="Predicting with TTD.."):
-            output = model_inferer(input_data).to(config.device)
+            output = model_inferer(input_data).to(device)
             all_outputs.append(output.cpu().numpy())
 
     # Convert to NumPy array for easier manipulation
@@ -51,7 +51,7 @@ def ttd_variance(model, input_data, model_inferer, n_iterations=20):
     return mean_output, variance_output
 
 
-def ttd_entropy(model, input_data, model_inferer, n_iterations=20):
+def ttd_entropy(model, input_data, model_inferer, device, n_iterations=20):
     """
     Run test-time dropout to estimate uncertainty (entropy-based).
 
@@ -71,7 +71,7 @@ def ttd_entropy(model, input_data, model_inferer, n_iterations=20):
     all_outputs = []
     with torch.no_grad(), torch.cuda.amp.autocast():
         for _ in tqdm(range(n_iterations), desc="Predicting with TTD.."):
-            output = torch.sigmoid(model_inferer(input_data)).to(config.device)
+            output = torch.sigmoid(model_inferer(input_data)).to(device)
             all_outputs.append(output.cpu().numpy())
 
     # Convert to NumPy array for easier manipulation
@@ -88,7 +88,8 @@ def ttd_entropy(model, input_data, model_inferer, n_iterations=20):
     return mean_output, entropy_output
 
 
-def scale_to_range_0_100(uncertainty_map):
+def minmax_uncertainties(uncertainty_map):
+    # scale: 0-1
     min_val = np.min(uncertainty_map)
     max_val = np.max(uncertainty_map)
 
@@ -96,5 +97,5 @@ def scale_to_range_0_100(uncertainty_map):
     if max_val - min_val == 0:
         return np.zeros_like(uncertainty_map)
 
-    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val) * 100
+    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val) 
     return scaled_uncertainty_map

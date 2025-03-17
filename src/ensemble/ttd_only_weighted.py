@@ -20,6 +20,8 @@ sys.path.append("../")
 import models.models as models
 import config.config as config
 from utils.utils import AverageMeter
+from uncertainty.test_time_augmentation import tta_variance
+from uncertainty.test_time_dropout import ttd_variance, minmax_uncertainties
 
 #####################
 #### Load Models ####
@@ -260,6 +262,14 @@ def compute_metrics(pred, gt):
     sensitivity = sensitivity.squeeze(0).cpu().numpy()
     specificity = specificity.squeeze(0).cpu().numpy()
 
+    for i in range(len(sensitivity)):
+        if not_nans[i] == 0:  # Tissue is absent
+            pred_empty = (
+                torch.sum(pred_stack[i]).item() == 0
+            )
+            sensitivity[i] = 1.0 if pred_empty else 0.0
+            specificity[i] = 1.0
+
     return dice_scores, hd95, sensitivity, specificity
 
 
@@ -302,8 +312,8 @@ def save_average_metrics(metrics_list, filename):
     print(f"Saved average test set metrics to {filename}")
 
 
-def ensemble_segmentation(
-    test_loader, models_dict, composite_score_weights, patient_id=None, output_dir="./output_segmentations/performance_weighted"
+def ensemble_segmentation_ttd(
+    test_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=None, output_dir="./output_segmentations/ttd_only_5"
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -321,7 +331,7 @@ def ensemble_segmentation(
     else:
         # Get full test data loader
         test_data_loader = test_loader
-
+    
     # Compute performance weights for all classes (BG, NCR, ED, ET)
     model_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
     for model_name in models_dict.keys():
@@ -337,6 +347,7 @@ def ensemble_segmentation(
     print(f"Computed model weights per class: {model_weights}")
         
     patient_metrics = []
+    epsilon = 1e-6 # for numerical stability
     with torch.no_grad():
         for batch_data in test_data_loader:
             image = batch_data["image"].to(config.device)
@@ -350,40 +361,52 @@ def ensemble_segmentation(
                 f"\nProcessing patient: {patient_id}\n",
             )
 
-            # Collect weighted logits for each class
-            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
-            for model_name, (model, inferer) in models_dict.items():
-                logits = inferer(image).squeeze(0)  # Shape: (num_classes, H, W, D)
-                # Background channel (assumed index 0)
-                weighted_logits["BG"].append(model_weights["BG"][model_name] * logits[0])
-                # Tumor channels (indices 1,2,3 for NCR, ED, ET)
-                for idx, region in enumerate(["NCR", "ED", "ET"]):
-                    weighted_logits[region].append(model_weights[region][model_name] * logits[idx+1])
-            # Fuse logits: weighted sum for each class
-            fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
-            fused_tumor = [
-                torch.sum(torch.stack(weighted_logits[region]), dim=0)
-                for region in ["NCR", "ED", "ET"]
-            ]
-            # Stack background with tumor channels so that final shape is (num_classes, H, W, D)
-            fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
-            # Apply softmax and compute segmentation map
-            seg = (
-                torch.nn.functional.softmax(fused_logits, dim=0)
-                .argmax(dim=0)
-                .unsqueeze(0)
-            )
+            # To store per-model predictions and voxel-level effective weights.
+            model_preds = []
+            model_voxel_weights = []
 
-            pred_one_hot = [(seg == i).float() for i in range(1, 4)]
+            region_map = {0: "BG", 1: "NCR", 2: "ED", 3: "ET"} # channel indices to region names
+            alpha = 0.5
+            for model_name, (model, inferer) in models_dict.items():
+                ttd_mean, uncertainty_vol = ttd_variance(model, inferer, image, config.device, n_iterations=n_iterations)
+                uncertainty_vol = minmax_uncertainties(uncertainty_vol)
+
+                # Remove batch dimension => shape becomes (num_classes, H, W, D)
+                ttd_mean = np.squeeze(ttd_mean, axis=0)
+                uncertainty_vol = np.squeeze(uncertainty_vol, axis=0)
+
+                # For each channel, compute the effective voxel-wise weight.
+                # effective_weight = performance_weight * (1 / (uncertainty_voxel + epsilon))
+                effective_weight = np.empty_like(uncertainty_vol)
+                for ch in range(ttd_mean.shape[0]):
+                    region = region_map.get(ch, None)
+                    if region is None:
+                        raise ValueError(f"Unexpected channel index {ch}.")
+                    perf_w = model_weights[region][model_name]
+                    effective_weight[ch] = perf_w * np.exp(-alpha * (uncertainty_vol[ch] + epsilon))
+
+                model_preds.append(ttd_mean)
+                model_voxel_weights.append(effective_weight)
+            
+            # Stack predictions and weights from all models.
+            # Shapes: (num_models, num_classes, H, W, D)
+            ensemble_preds = np.stack(model_preds, axis=0)
+            ensemble_weights = np.stack(model_voxel_weights, axis=0)
+
+            # Compute weighted sum of predictions, voxelwise.
+            # Sum over models (axis=0) then normalize by sum of weights.
+            weighted_sum = np.sum(ensemble_preds * ensemble_weights, axis=0)
+            sum_weights = np.sum(ensemble_weights, axis=0) + epsilon  # avoid division by zero
+            fused_probabilities = weighted_sum / sum_weights  # shape: (num_classes, H, W, D)
+
+            # Final segmentation by taking argmax over channels.
+            seg = np.argmax(fused_probabilities, axis=0).astype(np.uint8)
+            seg = np.expand_dims(seg, axis=0) # add batch dim
+            
+            pred_one_hot = [torch.tensor((seg == i).astype(np.float32), device=config.device) for i in range(1, 4)]
             gt_one_hot = [(gt == i).float() for i in range(1, 4)]
 
-            # print(f"Shape of seg: {seg.shape}")
-            # print(f"Shape of gt: {gt.shape}")
-            # print(f"Unique values in seg: {torch.unique(seg)}")
-            # print(f"Unique values in gt: {torch.unique(gt)}")
-            # print(f"Length of pred_one_hot: {len(pred_one_hot)}")
-            # print(f"Length of gt_one_hot: {len(gt_one_hot)}")
-
+            # Get performance metrics
             dice, hd95, sensitivity, specificity = compute_metrics(
                 pred_one_hot, gt_one_hot
             )
@@ -419,7 +442,7 @@ def ensemble_segmentation(
             seg = seg.squeeze(0) # remove batch dimension
 
             # Save segmentation
-            output_path = os.path.join(output_dir, f"perf_weigh_segmentation_{patient_id}.nii.gz")
+            output_path = os.path.join(output_dir, f"ttd_only_5_segmentation_{patient_id}.nii.gz")
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             # Display a middle slice
@@ -428,8 +451,8 @@ def ensemble_segmentation(
             start_time = time.time()
             torch.cuda.empty_cache()
 
-    csv_path = os.path.join(output_dir, "perf_weight_patient_metrics.csv")
-    json_path = os.path.join(output_dir, "perf_weight_average_metrics.json")
+    csv_path = os.path.join(output_dir, "ttd_only_5_patient_metrics.csv")
+    json_path = os.path.join(output_dir, "ttd_only_5_average_metrics.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
 
@@ -453,7 +476,7 @@ def visualize_segmentation(segmentation, patient_id):
     plt.imshow(segmentation[:, :, slice_index], cmap="gray")
     plt.title(f"Segmentation Slice at Index {slice_index}")
     plt.axis("off")
-    plt.savefig(f"perf_weigh_segmentation_{patient_id}_slice.png")
+    plt.savefig(f"ttd_only_5_segmentation_{patient_id}_slice.png")
     # plt.show()
 
 
@@ -470,4 +493,4 @@ if __name__ == "__main__":
         "Sensitivity": 0.3,
         "Specificity": 0.1
     }
-    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights)
+    ensemble_segmentation_ttd(config.test_loader, models_dict, composite_score_weights, n_iterations=5)

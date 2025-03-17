@@ -86,10 +86,10 @@ def compute_metrics(pred, gt):
     Compute Dice, HD95, Sensitivity, and Specificity for segmentation predictions.
     """
     dice_metric = DiceMetric(
-        include_background=False, reduction=MetricReduction.NONE, get_not_nans=True
+        include_background=True, reduction=MetricReduction.NONE, get_not_nans=True
     )
     confusion_metric = ConfusionMatrixMetric(
-        include_background=False,
+        include_background=True,
         metric_name=["sensitivity", "specificity"],
         reduction="none",
         compute_sample=False,
@@ -111,7 +111,7 @@ def compute_metrics(pred, gt):
     hd95 = compute_hausdorff_distance(
         y_pred=pred_stack,
         y=gt_stack,
-        include_background=False,
+        include_background=True,
         distance_metric="euclidean",
         percentile=95,
     )
@@ -142,7 +142,7 @@ def compute_metrics(pred, gt):
                 mock_val = compute_hausdorff_distance(
                     y_pred=pred[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
-                    include_background=False,
+                    include_background=True,
                     distance_metric="euclidean",
                     percentile=95,
                 )
@@ -168,7 +168,7 @@ def compute_metrics(pred, gt):
                 mock_val = compute_hausdorff_distance(
                     y_pred=gt[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
-                    include_background=False,
+                    include_background=True,
                     distance_metric="euclidean",
                     percentile=95,
                 )
@@ -275,11 +275,11 @@ def performance_estimation(
                 .unsqueeze(0)
             )  # Shape: (H, W, D)
 
-            pred_one_hot = [(seg == i).float() for i in range(1, 4)]
+            pred_one_hot = [(seg == i).float() for i in range(0, 4)]
             if gt.shape[1] == 4:
                 # Ground truth is already one-hot encoded (assume channel 0 is background).
                 # Extract channels 1,2,3 and permute to have shape [3, 1, H, W, D].
-                gt_one_hot = gt[:, 1:, :, :, :].permute(1, 0, 2, 3, 4)
+                gt_one_hot = gt.permute(1, 0, 2, 3, 4)
             else:
                 # Ground truth is not one-hot encoded, so create one-hot encoding.
                 gt_one_hot = [ (gt == i).float() for i in range(1, 4) ]
@@ -298,31 +298,35 @@ def performance_estimation(
                 pred_one_hot, gt_one_hot
             )
             print(
-                f"Dice NCR: {dice[0].item():.4f}, Dice ED: {dice[1].item():.4f}, Dice ET: {dice[2].item():.4f}\n",
-                f"HD95 NCR: {hd95[0].item():.2f}, HD95 ED: {hd95[1].item():.2f}, HD95 ET: {hd95[2].item():.2f}\n",
-                f"Sensitivity NCR: {sensitivity[0].item():.4f}, ED: {sensitivity[1].item():.4f}, ET: {sensitivity[2].item():.4f}\n",
-                f"Specificity NCR: {specificity[0].item():.4f}, ED: {specificity[1].item():.4f}, ET: {specificity[2].item():.4f}\n",
+                f"Dice BG: {dice[0].item():.4f}, Dice NCR: {dice[1].item():.4f}, Dice ED: {dice[2].item():.4f}, Dice ET: {dice[3].item():.4f}\n"
+                f"HD95 BG: {hd95[0].item():.2f}, HD95 NCR: {hd95[1].item():.2f}, HD95 ED: {hd95[2].item():.2f}, HD95 ET: {hd95[3].item():.2f}\n"
+                f"Sensitivity BG: {sensitivity[0].item():.4f}, NCR: {sensitivity[1].item():.4f}, ED: {sensitivity[2].item():.4f}, ET: {sensitivity[3].item():.4f}\n"
+                f"Specificity BG: {specificity[0].item():.4f}, NCR: {specificity[1].item():.4f}, ED: {specificity[2].item():.4f}, ET: {specificity[3].item():.4f}\n"
             )
 
             patient_metrics.append(
                 {
                     "patient_id": patient_id,
-                    "Dice NCR": dice[0].item(),
-                    "Dice ED": dice[1].item(),
-                    "Dice ET": dice[2].item(),
-                    "Dice overall": np.nanmean(dice),
-                    "HD95 NCR": hd95[0].item(),
-                    "HD95 ED": hd95[1].item(),
-                    "HD95 ET": hd95[2].item(),
-                    "HD95 overall": np.nanmean(hd95),
-                    "Sensitivity NCR": sensitivity[0].item(),
-                    "Sensitivity ED": sensitivity[1].item(),
-                    "Sensitivity ET": sensitivity[2].item(),
-                    "Sensitivity overall": np.nanmean(sensitivity),
-                    "Specificity NCR": specificity[0].item(),
-                    "Specificity ED": specificity[1].item(),
-                    "Specificity ET": specificity[2].item(),
-                    "Specificity overall": np.nanmean(specificity),
+                    "Dice BG": dice[0].item(),
+                    "Dice NCR": dice[1].item(),
+                    "Dice ED": dice[2].item(),
+                    "Dice ET": dice[3].item(),
+                    "Dice overall": float(np.nanmean(dice)),
+                    "HD95 BG": hd95[0].item(),
+                    "HD95 NCR": hd95[1].item(),
+                    "HD95 ED": hd95[2].item(),
+                    "HD95 ET": hd95[3].item(),
+                    "HD95 overall": float(np.nanmean(hd95)),
+                    "Sensitivity BG": sensitivity[0].item(),
+                    "Sensitivity NCR": sensitivity[1].item(),
+                    "Sensitivity ED": sensitivity[2].item(),
+                    "Sensitivity ET": sensitivity[3].item(),
+                    "Sensitivity overall": float(np.nanmean(sensitivity)),
+                    "Specificity BG": specificity[0].item(),
+                    "Specificity NCR": specificity[1].item(),
+                    "Specificity ED": specificity[2].item(),
+                    "Specificity ET": specificity[3].item(),
+                    "Specificity overall": float(np.nanmean(specificity)),
                 }
             )
 
