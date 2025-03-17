@@ -122,6 +122,13 @@ def compute_metrics(pred, gt):
     dice_scores, not_nans = dice_metric.aggregate()
     dice_scores = dice_scores.cpu().numpy()
 
+    for i, dice_score in enumerate(dice_scores):
+        if not_nans[i] == 0:  # Tissue is absent in ground truth
+            pred_empty = (
+                torch.sum(pred_stack[i]).item() == 0
+            )
+            dice_scores[i] = 1.0 if pred_empty else 0.0
+
     # Compute HD95
     hd95 = compute_hausdorff_distance(
         y_pred=pred_stack,
@@ -140,7 +147,7 @@ def compute_metrics(pred, gt):
             hd95[i] = 0.0
 
         elif gt_empty and not pred_empty:  # Tissue is absent in ground truth
-            pred_array = torch.stack(pred)[:, i].cpu().numpy()  # Convert to NumPy
+            pred_array = pred[i].cpu().numpy()  # Convert to NumPy
             if np.sum(pred_array) > 0:
                 # Compute Center of Mass for the predicted mask
                 com = center_of_mass(pred_array)
@@ -157,7 +164,7 @@ def compute_metrics(pred, gt):
 
                 # Compute Hausdorff Distance between prediction and CoM mask
                 mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[:, i].unsqueeze(0),
+                    y_pred=torch.stack(pred)[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
                     include_background=False,
                     distance_metric="euclidean",
@@ -173,7 +180,7 @@ def compute_metrics(pred, gt):
                 hd95[i] = 0.0
 
         elif pred_empty and not gt_empty:  # Model predicts tissue is absent
-            gt_array = torch.stack(pred)[:, i].cpu().numpy()
+            gt_array = torch.stack(gt)[i].cpu().numpy()
             if np.sum(gt_array) > 0:
                 # Compute Center of Mass for the GT mask
                 com = center_of_mass(gt_array)
@@ -190,7 +197,7 @@ def compute_metrics(pred, gt):
 
                 # Compute Hausdorff Distance between GT CoM and empty prediction
                 mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[:, i].unsqueeze(0),
+                    y_pred=torch.stack(gt)[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
                     include_background=False,
                     distance_metric="euclidean",
@@ -213,6 +220,14 @@ def compute_metrics(pred, gt):
     sensitivity, specificity = confusion_metric.aggregate()
     sensitivity = sensitivity.squeeze(0).cpu().numpy()
     specificity = specificity.squeeze(0).cpu().numpy()
+
+    for i in range(len(sensitivity)):
+        if not_nans[i] == 0:  # Tissue is absent
+            pred_empty = (
+                torch.sum(pred_stack[i]).item() == 0
+            )
+            sensitivity[i] = 1.0 if pred_empty else 0.0
+            specificity[i] = 1.0
 
     return dice_scores, hd95, sensitivity, specificity
 
@@ -304,6 +319,7 @@ def ensemble_segmentation(
                 torch.stack(logits_list), dim=0
             )  # Shape: (num_classes, H, W, D)
 
+
             # Apply softmax and convert to segmentation map
             seg = (
                 torch.nn.functional.softmax(avg_logits, dim=0)
@@ -356,11 +372,11 @@ def ensemble_segmentation(
             seg = seg.squeeze(0) # remove batch dimension
 
             # Save segmentation
-            output_path = os.path.join(output_dir, f"segmentation_{patient_id}.nii.gz")
+            output_path = os.path.join(output_dir, f"simple_avg_segmentation_{patient_id}.nii.gz")
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             # Display a middle slice
-            visualize_segmentation(seg.cpu().numpy(), patient_id)
+            # visualize_segmentation(seg.cpu().numpy(), patient_id)
 
             start_time = time.time()
             torch.cuda.empty_cache()
@@ -399,6 +415,6 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "01556"
+    # patient_id = "01556"
     models_dict = load_all_models()
-    ensemble_segmentation(config.test_loader, models_dict, patient_id=patient_id)
+    ensemble_segmentation(config.test_loader, models_dict)
