@@ -14,7 +14,7 @@ import time
 import pandas as pd
 import json
 import re
-import math 
+import math
 
 # Add custom modules
 sys.path.append("../")
@@ -68,14 +68,16 @@ def load_all_models():
         ),
     }
 
+
 #####################
 #### Load Weights ####
 #####################
 
+
 def load_weights(performance_weights_path):
     with open(performance_weights_path) as f:
         performance = json.load(f)
-    return performance 
+    return performance
 
 
 def extract_patient_id(path):
@@ -86,6 +88,7 @@ def extract_patient_id(path):
     patient_id = numbers[-1]
 
     return patient_id
+
 
 def save_metrics_csv(metrics_list, filename):
     """
@@ -114,7 +117,11 @@ def save_average_metrics(metrics_list, filename):
 
 
 def summarize_uncertainty(
-    data_loader, models_dict, n_iterations=20, patient_id=None, output_dir="./outputs/uncertainties"
+    data_loader,
+    models_dict,
+    n_iterations=20,
+    patient_id=None,
+    output_dir="./outputs/uncertainties",
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -132,7 +139,7 @@ def summarize_uncertainty(
     else:
         # Get full test data loader
         data_loader = data_loader
-    
+
     uncertainty_data = []
     with torch.no_grad():
         for batch_data in data_loader:
@@ -154,42 +161,57 @@ def summarize_uncertainty(
             w_tta = 0.5
             for model_name, (model, inferer) in models_dict.items():
                 # Get dropout uncertainty (TTD)
-                ttd_mean, ttd_uncertainty = ttd_variance(model, inferer, image, config.device, n_iterations=n_iterations)
+                ttd_mean, ttd_uncertainty = ttd_variance(
+                    model, inferer, image, config.device, n_iterations=n_iterations
+                )
                 # Get augmentation uncertainty (TTA)
-                tta_mean, tta_uncertainty = tta_variance(inferer, image, config.device, n_iterations=n_iterations)
-                
+                tta_mean, tta_uncertainty = tta_variance(
+                    inferer, image, config.device, n_iterations=n_iterations
+                )
+
                 # Normalize each uncertainty map (assumes minmax_uncertainties scales to 0-1).
                 ttd_uncertainty_norm = minmax_uncertainties(ttd_uncertainty)
                 tta_uncertainty_norm = minmax_uncertainties(tta_uncertainty)
-                
-                # Compute the hybrid uncertainty by averaging the normalized uncertainties.
-                hybrid_uncertainty = w_ttd * ttd_uncertainty_norm + w_tta * tta_uncertainty_norm
-                
-                # Remove the batch dimension: now shape becomes (num_classes, H, W, D)
-                tta_uncertainty_norm = np.power(np.squeeze(tta_uncertainty_norm, axis=0), 0.5)
-                ttd_uncertainty_norm = np.power(np.squeeze(ttd_uncertainty_norm, axis=0), 0.5)
-                hybrid_uncertainty = np.power(np.squeeze(hybrid_uncertainty, axis=0), 0.5)
 
-                uncertainty_data.append({
-                    "Patient ID": patient_id,
-                    "Model": model_name,
-                    "TTA NCR": np.median(tta_uncertainty_norm[1]),
-                    "TTA ED": np.median(tta_uncertainty_norm[2]),
-                    "TTA ET": np.median(tta_uncertainty_norm[3]),
-                    "TTD NCR": np.median(ttd_uncertainty_norm[1]),
-                    "TTD ED": np.median(ttd_uncertainty_norm[2]),
-                    "TTD ET": np.median(ttd_uncertainty_norm[3]),
-                    "Hybrid NCR": np.median(hybrid_uncertainty[1]),
-                    "Hybrid ED": np.median(hybrid_uncertainty[2]),
-                    "Hybrid ET": np.median(hybrid_uncertainty[3]),
-                })
-                
+                # Compute the hybrid uncertainty by averaging the normalized uncertainties.
+                hybrid_uncertainty = (
+                    w_ttd * ttd_uncertainty_norm + w_tta * tta_uncertainty_norm
+                )
+
+                # Remove the batch dimension: now shape becomes (num_classes, H, W, D)
+                tta_uncertainty_norm = np.power(
+                    np.squeeze(tta_uncertainty_norm, axis=0), 0.5
+                )
+                ttd_uncertainty_norm = np.power(
+                    np.squeeze(ttd_uncertainty_norm, axis=0), 0.5
+                )
+                hybrid_uncertainty = np.power(
+                    np.squeeze(hybrid_uncertainty, axis=0), 0.5
+                )
+
+                uncertainty_data.append(
+                    {
+                        "Patient ID": patient_id,
+                        "Model": model_name,
+                        "TTA NCR": np.median(tta_uncertainty_norm[1]),
+                        "TTA ED": np.median(tta_uncertainty_norm[2]),
+                        "TTA ET": np.median(tta_uncertainty_norm[3]),
+                        "TTD NCR": np.median(ttd_uncertainty_norm[1]),
+                        "TTD ED": np.median(ttd_uncertainty_norm[2]),
+                        "TTD ET": np.median(ttd_uncertainty_norm[3]),
+                        "Hybrid NCR": np.median(hybrid_uncertainty[1]),
+                        "Hybrid ED": np.median(hybrid_uncertainty[2]),
+                        "Hybrid ET": np.median(hybrid_uncertainty[3]),
+                    }
+                )
+
             torch.cuda.empty_cache()
 
     df = pd.DataFrame(uncertainty_data)
     csv_path = os.path.join(output_dir, "patient_uncertainties.csv")
     df.to_csv(csv_path, index=False)
     print(f"✅ Saved per-patient uncertainty medians to: {csv_path}")
+
 
 ####################################
 #### Visualize Segmentation ####
@@ -229,4 +251,6 @@ if __name__ == "__main__":
         use_final_split=True,
     )
     models_dict = load_all_models()
-    summarize_uncertainty(val_loader, models_dict, n_iterations=20, patient_id=patient_id)
+    summarize_uncertainty(
+        val_loader, models_dict, n_iterations=20, patient_id=patient_id
+    )

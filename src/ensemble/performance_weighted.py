@@ -64,41 +64,44 @@ def load_all_models():
         ),
     }
 
+
 #####################
 #### Load Weights ####
 #####################
 
+
 def load_weights(performance_weights_path):
     with open(performance_weights_path) as f:
         performance = json.load(f)
-    return performance 
+    return performance
+
 
 ##############################
 #### Compute Weighted Scores ##
 ##############################
 
+
 def compute_composite_scores(metrics, weights):
     """Compute weighted composite scores for a model.
-       Now includes a score for the background (BG) class.
+    Now includes a score for the background (BG) class.
     """
     composite_scores = {}
     # Background composite score
     normalized_hd95_bg = 1 / (1 + metrics["HD95 BG"])
     composite_scores["BG"] = (
-        weights["Dice"] * metrics["Dice BG"] +
-        weights["HD95"] * normalized_hd95_bg +
-        weights["Sensitivity"] * metrics["Sensitivity BG"] +
-        weights["Specificity"] * metrics["Specificity BG"]
-
+        weights["Dice"] * metrics["Dice BG"]
+        + weights["HD95"] * normalized_hd95_bg
+        + weights["Sensitivity"] * metrics["Sensitivity BG"]
+        + weights["Specificity"] * metrics["Specificity BG"]
     )
     # Tumor regions composite scores
     for region in ["NCR", "ED", "ET"]:
         normalized_hd95 = 1 / (1 + metrics[f"HD95 {region}"])
         composite_scores[region] = (
-            weights["Dice"] * metrics[f"Dice {region}"] +
-            weights["HD95"] * normalized_hd95 +
-            weights["Sensitivity"] * metrics[f"Sensitivity {region}"] + 
-            weights["Specificity"] * metrics[f"Specificity {region}"]
+            weights["Dice"] * metrics[f"Dice {region}"]
+            + weights["HD95"] * normalized_hd95
+            + weights["Sensitivity"] * metrics[f"Sensitivity {region}"]
+            + weights["Specificity"] * metrics[f"Specificity {region}"]
         )
     return composite_scores
 
@@ -162,9 +165,7 @@ def compute_metrics(pred, gt):
 
     for i, dice_score in enumerate(dice_scores):
         if not_nans[i] == 0:  # Tissue is absent in ground truth
-            pred_empty = (
-                torch.sum(pred_stack[i]).item() == 0
-            )
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
             dice_scores[i] = 1.0 if pred_empty else 0.0
 
     # Compute HD95
@@ -303,7 +304,11 @@ def save_average_metrics(metrics_list, filename):
 
 
 def ensemble_segmentation(
-    test_loader, models_dict, composite_score_weights, patient_id=None, output_dir="./output_segmentations/performance_weighted"
+    test_loader,
+    models_dict,
+    composite_score_weights,
+    patient_id=None,
+    output_dir="./output_segmentations/performance_weighted",
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -325,7 +330,9 @@ def ensemble_segmentation(
     # Compute performance weights for all classes (BG, NCR, ED, ET)
     model_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
     for model_name in models_dict.keys():
-        performance_weights_path = f'../models/performance/{model_name}/average_metrics.json'
+        performance_weights_path = (
+            f"../models/performance/{model_name}/average_metrics.json"
+        )
         metrics = load_weights(performance_weights_path)
         composite_scores = compute_composite_scores(metrics, composite_score_weights)
         for region in ["BG", "NCR", "ED", "ET"]:
@@ -333,9 +340,11 @@ def ensemble_segmentation(
     # Normalize weights per class
     for region in ["BG", "NCR", "ED", "ET"]:
         total_weight = sum(model_weights[region].values())
-        model_weights[region] = {k: v / total_weight for k, v in model_weights[region].items()}
+        model_weights[region] = {
+            k: v / total_weight for k, v in model_weights[region].items()
+        }
     print(f"Computed model weights per class: {model_weights}")
-        
+
     patient_metrics = []
     with torch.no_grad():
         for batch_data in test_data_loader:
@@ -355,10 +364,14 @@ def ensemble_segmentation(
             for model_name, (model, inferer) in models_dict.items():
                 logits = inferer(image).squeeze(0)  # Shape: (num_classes, H, W, D)
                 # Background channel (assumed index 0)
-                weighted_logits["BG"].append(model_weights["BG"][model_name] * logits[0])
+                weighted_logits["BG"].append(
+                    model_weights["BG"][model_name] * logits[0]
+                )
                 # Tumor channels (indices 1,2,3 for NCR, ED, ET)
                 for idx, region in enumerate(["NCR", "ED", "ET"]):
-                    weighted_logits[region].append(model_weights[region][model_name] * logits[idx+1])
+                    weighted_logits[region].append(
+                        model_weights[region][model_name] * logits[idx + 1]
+                    )
             # Fuse logits: weighted sum for each class
             fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
             fused_tumor = [
@@ -416,10 +429,12 @@ def ensemble_segmentation(
                 }
             )
 
-            seg = seg.squeeze(0) # remove batch dimension
+            seg = seg.squeeze(0)  # remove batch dimension
 
             # Save segmentation
-            output_path = os.path.join(output_dir, f"perf_weigh_segmentation_{patient_id}.nii.gz")
+            output_path = os.path.join(
+                output_dir, f"perf_weigh_segmentation_{patient_id}.nii.gz"
+            )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             # Display a middle slice
@@ -468,6 +483,6 @@ if __name__ == "__main__":
         "Dice": 0.45,
         "HD95": 0.15,
         "Sensitivity": 0.3,
-        "Specificity": 0.1
+        "Specificity": 0.1,
     }
     ensemble_segmentation(config.test_loader, models_dict, composite_score_weights)

@@ -22,6 +22,7 @@ import config.config as config
 from utils.utils import AverageMeter
 from uncertainty.test_time_dropout import ttd_variance
 
+
 #####################
 #### Load Models ####
 #####################
@@ -43,6 +44,7 @@ def load_model(model_class, checkpoint_path, device):
         overlap=config.infer_overlap,
     )
 
+
 def load_all_models():
     """
     Load all segmentation models into a dictionary.
@@ -62,45 +64,50 @@ def load_all_models():
         ),
     }
 
+
 #####################
 #### Load Weights ####
 #####################
 def load_weights(performance_weights_path):
     with open(performance_weights_path) as f:
         performance = json.load(f)
-    return performance 
+    return performance
+
 
 ##############################
 #### Compute Weighted Scores ##
 ##############################
 def compute_composite_scores(metrics, weights):
     """Compute weighted composite scores for a model.
-       Now includes a score for the background (BG) class.
+    Now includes a score for the background (BG) class.
     """
     composite_scores = {}
     # Background composite score
     normalized_hd95_bg = 1 / (1 + metrics["HD95 BG"])
     composite_scores["BG"] = (
-        weights["Dice"] * metrics["Dice BG"] +
-        weights["HD95"] * normalized_hd95_bg +
-        weights["Sensitivity"] * metrics["Sensitivity BG"] +
-        weights["Specificity"] * metrics["Specificity BG"]
+        weights["Dice"] * metrics["Dice BG"]
+        + weights["HD95"] * normalized_hd95_bg
+        + weights["Sensitivity"] * metrics["Sensitivity BG"]
+        + weights["Specificity"] * metrics["Specificity BG"]
     )
     # Tumor regions composite scores
     for region in ["NCR", "ED", "ET"]:
         normalized_hd95 = 1 / (1 + metrics[f"HD95 {region}"])
         composite_scores[region] = (
-            weights["Dice"] * metrics[f"Dice {region}"] +
-            weights["HD95"] * normalized_hd95 +
-            weights["Sensitivity"] * metrics[f"Sensitivity {region}"] + 
-            weights["Specificity"] * metrics[f"Specificity {region}"]
+            weights["Dice"] * metrics[f"Dice {region}"]
+            + weights["HD95"] * normalized_hd95
+            + weights["Sensitivity"] * metrics[f"Sensitivity {region}"]
+            + weights["Specificity"] * metrics[f"Specificity {region}"]
         )
     return composite_scores
+
 
 #############################
 #### Save Segmentation ######
 #############################
-def save_segmentation_as_nifti(predicted_segmentation, reference_image_path, output_path):
+def save_segmentation_as_nifti(
+    predicted_segmentation, reference_image_path, output_path
+):
     """
     Save the predicted segmentation as a NIfTI file.
     """
@@ -109,9 +116,12 @@ def save_segmentation_as_nifti(predicted_segmentation, reference_image_path, out
 
     predicted_segmentation = predicted_segmentation.astype(np.uint8)
     ref_img = nib.load(reference_image_path)
-    seg_img = nib.Nifti1Image(predicted_segmentation, affine=ref_img.affine, header=ref_img.header)
+    seg_img = nib.Nifti1Image(
+        predicted_segmentation, affine=ref_img.affine, header=ref_img.header
+    )
     nib.save(seg_img, output_path)
     print(f"Segmentation saved to {output_path}")
+
 
 ########################################
 #### Gather performance metrics ########
@@ -120,7 +130,9 @@ def compute_metrics(pred, gt):
     """
     Compute Dice, HD95, Sensitivity, and Specificity for segmentation predictions.
     """
-    dice_metric = DiceMetric(include_background=False, reduction=MetricReduction.NONE, get_not_nans=True)
+    dice_metric = DiceMetric(
+        include_background=False, reduction=MetricReduction.NONE, get_not_nans=True
+    )
     confusion_metric = ConfusionMatrixMetric(
         include_background=False,
         metric_name=["sensitivity", "specificity"],
@@ -138,7 +150,7 @@ def compute_metrics(pred, gt):
 
     for i, dice_score in enumerate(dice_scores):
         if not_nans[i] == 0:  # Tissue is absent in ground truth
-            pred_empty = (torch.sum(pred_stack[i]).item() == 0)
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
             dice_scores[i] = 1.0 if pred_empty else 0.0
 
     # Compute HD95
@@ -165,7 +177,9 @@ def compute_metrics(pred, gt):
                 com_mask = np.zeros_like(pred_array, dtype=np.uint8)
                 com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
-                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                com_mask_tensor = (
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                )
                 mock_val = compute_hausdorff_distance(
                     y_pred=torch.stack(pred)[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
@@ -185,7 +199,9 @@ def compute_metrics(pred, gt):
                 com_mask = np.zeros_like(gt_array, dtype=np.uint8)
                 com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
-                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                com_mask_tensor = (
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                )
                 mock_val = compute_hausdorff_distance(
                     y_pred=torch.stack(gt)[i].unsqueeze(0),
                     y=com_mask_tensor.unsqueeze(0),
@@ -206,6 +222,7 @@ def compute_metrics(pred, gt):
 
     return dice_scores, hd95, sensitivity, specificity
 
+
 ########################################
 #### Perform Ensemble Segmentation ####
 ########################################
@@ -214,22 +231,32 @@ def extract_patient_id(path):
     patient_id = numbers[-1]
     return patient_id
 
+
 def save_metrics_csv(metrics_list, filename):
     df = pd.DataFrame(metrics_list)
     df.to_csv(filename, index=False)
     print(f"Saved patient-wise metrics to {filename}")
 
+
 def save_average_metrics(metrics_list, filename):
-    avg_metrics = {key: float(np.mean([m[key] for m in metrics_list]))
-                   for key in metrics_list[0] if key != "patient_id"}
+    avg_metrics = {
+        key: float(np.mean([m[key] for m in metrics_list]))
+        for key in metrics_list[0]
+        if key != "patient_id"
+    }
     with open(filename, "w") as f:
         json.dump(avg_metrics, f, indent=4)
     print(f"Saved average test set metrics to {filename}")
 
+
 # Here we define a new ensemble function that integrates TTA.
 def ensemble_segmentation_tta(
-    test_loader, models_dict, composite_score_weights, patient_id=None,
-    output_dir="./output_segmentations/ttd_scalar", n_iterations=20
+    test_loader,
+    models_dict,
+    composite_score_weights,
+    patient_id=None,
+    output_dir="./output_segmentations/ttd_scalar",
+    n_iterations=20,
 ):
     """
     Perform segmentation using an ensemble of models weighted by both performance and TTA uncertainty.
@@ -246,7 +273,9 @@ def ensemble_segmentation_tta(
     # Compute performance weights for all classes (BG, NCR, ED, ET)
     model_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
     for model_name in models_dict.keys():
-        performance_weights_path = f'../models/performance/{model_name}/average_metrics.json'
+        performance_weights_path = (
+            f"../models/performance/{model_name}/average_metrics.json"
+        )
         metrics = load_weights(performance_weights_path)
         composite_scores = compute_composite_scores(metrics, composite_score_weights)
         for region in ["BG", "NCR", "ED", "ET"]:
@@ -254,9 +283,11 @@ def ensemble_segmentation_tta(
     # Normalize performance weights per class (without uncertainty)
     for region in ["BG", "NCR", "ED", "ET"]:
         total_weight = sum(model_weights[region].values())
-        model_weights[region] = {k: v / total_weight for k, v in model_weights[region].items()}
+        model_weights[region] = {
+            k: v / total_weight for k, v in model_weights[region].items()
+        }
     print(f"Computed performance weights per class: {model_weights}")
-        
+
     patient_metrics = []
     epsilon = 1e-6  # for numerical stability in uncertainty weight computation
     with torch.no_grad():
@@ -272,7 +303,9 @@ def ensemble_segmentation_tta(
             weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
             for model_name, (model, inferer) in models_dict.items():
                 # Run TTD inference; tta_variance returns (mean_prediction, variance_volume)
-                ttd_mean, uncertainty_vol = ttd_variance(model, inferer, image, config.device, n_iterations=n_iterations)
+                ttd_mean, uncertainty_vol = ttd_variance(
+                    model, inferer, image, config.device, n_iterations=n_iterations
+                )
                 if not isinstance(ttd_mean, torch.Tensor):
                     ttd_mean = torch.tensor(ttd_mean, device=config.device)
                 logits = ttd_mean.squeeze(0)  # Shape: (num_classes, H, W, D)
@@ -281,13 +314,20 @@ def ensemble_segmentation_tta(
                 mean_uncertainty = np.mean(uncertainty_vol)
                 # Define an uncertainty weight; lower uncertainty yields a higher weight.
                 uncertainty_weight = 1 / (1 + mean_uncertainty + epsilon)
-                print(f"Model {model_name} - Mean uncertainty: {mean_uncertainty:.4f}, uncertainty weight: {uncertainty_weight:.4f}")
-                
+                print(
+                    f"Model {model_name} - Mean uncertainty: {mean_uncertainty:.4f}, uncertainty weight: {uncertainty_weight:.4f}"
+                )
+
                 # Combine performance weight with uncertainty weight for each class:
-                weighted_logits["BG"].append( (model_weights["BG"][model_name] * uncertainty_weight) * logits[0] )
+                weighted_logits["BG"].append(
+                    (model_weights["BG"][model_name] * uncertainty_weight) * logits[0]
+                )
                 for idx, region in enumerate(["NCR", "ED", "ET"]):
-                    weighted_logits[region].append( (model_weights[region][model_name] * uncertainty_weight) * logits[idx+1] )
-            
+                    weighted_logits[region].append(
+                        (model_weights[region][model_name] * uncertainty_weight)
+                        * logits[idx + 1]
+                    )
+
             # Fuse logits by weighted sum for each class
             fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
             fused_tumor = [
@@ -297,12 +337,18 @@ def ensemble_segmentation_tta(
             # Stack background with tumor channels so that final shape is (num_classes, H, W, D)
             fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
             # Apply softmax and compute segmentation map
-            seg = torch.nn.functional.softmax(fused_logits, dim=0).argmax(dim=0).unsqueeze(0)
+            seg = (
+                torch.nn.functional.softmax(fused_logits, dim=0)
+                .argmax(dim=0)
+                .unsqueeze(0)
+            )
 
             pred_one_hot = [(seg == i).float() for i in range(1, 4)]
             gt_one_hot = [(gt == i).float() for i in range(1, 4)]
 
-            dice, hd95, sensitivity, specificity = compute_metrics(pred_one_hot, gt_one_hot)
+            dice, hd95, sensitivity, specificity = compute_metrics(
+                pred_one_hot, gt_one_hot
+            )
             print(
                 f"Dice NCR: {dice[0].item():.4f}, Dice ED: {dice[1].item():.4f}, Dice ET: {dice[2].item():.4f}\n",
                 f"HD95 NCR: {hd95[0].item():.2f}, HD95 ED: {hd95[1].item():.2f}, HD95 ET: {hd95[2].item():.2f}\n",
@@ -310,28 +356,32 @@ def ensemble_segmentation_tta(
                 f"Specificity NCR: {specificity[0].item():.4f}, ED: {specificity[1].item():.4f}, ET: {specificity[2].item():.4f}\n",
             )
 
-            patient_metrics.append({
-                "patient_id": patient_id,
-                "Dice NCR": dice[0].item(),
-                "Dice ED": dice[1].item(),
-                "Dice ET": dice[2].item(),
-                "Dice overall": np.mean(dice),
-                "HD95 NCR": hd95[0].item(),
-                "HD95 ED": hd95[1].item(),
-                "HD95 ET": hd95[2].item(),
-                "HD95 overall": np.mean(hd95),
-                "Sensitivity NCR": sensitivity[0].item(),
-                "Sensitivity ED": sensitivity[1].item(),
-                "Sensitivity ET": sensitivity[2].item(),
-                "Sensitivity overall": np.mean(sensitivity),
-                "Specificity NCR": specificity[0].item(),
-                "Specificity ED": specificity[1].item(),
-                "Specificity ET": specificity[2].item(),
-                "Specificity overall": np.mean(specificity),
-            })
+            patient_metrics.append(
+                {
+                    "patient_id": patient_id,
+                    "Dice NCR": dice[0].item(),
+                    "Dice ED": dice[1].item(),
+                    "Dice ET": dice[2].item(),
+                    "Dice overall": np.mean(dice),
+                    "HD95 NCR": hd95[0].item(),
+                    "HD95 ED": hd95[1].item(),
+                    "HD95 ET": hd95[2].item(),
+                    "HD95 overall": np.mean(hd95),
+                    "Sensitivity NCR": sensitivity[0].item(),
+                    "Sensitivity ED": sensitivity[1].item(),
+                    "Sensitivity ET": sensitivity[2].item(),
+                    "Sensitivity overall": np.mean(sensitivity),
+                    "Specificity NCR": specificity[0].item(),
+                    "Specificity ED": specificity[1].item(),
+                    "Specificity ET": specificity[2].item(),
+                    "Specificity overall": np.mean(specificity),
+                }
+            )
 
             seg = seg.squeeze(0)  # remove batch dimension
-            output_path = os.path.join(output_dir, f"ttd_scalar_segmentation_{patient_id}.nii.gz")
+            output_path = os.path.join(
+                output_dir, f"ttd_scalar_segmentation_{patient_id}.nii.gz"
+            )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             torch.cuda.empty_cache()
@@ -340,7 +390,8 @@ def ensemble_segmentation_tta(
     json_path = os.path.join(output_dir, "ttd_scalar_average_metrics_tta.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
-    
+
+
 ####################################
 #### Visualize Segmentation ####
 ####################################
@@ -353,6 +404,7 @@ def visualize_segmentation(segmentation, patient_id):
     plt.savefig(f"ttd_scalar_segmentation_{patient_id}_slice.png")
     # plt.show()
 
+
 #######################
 #### Run Inference ####
 #######################
@@ -363,6 +415,8 @@ if __name__ == "__main__":
         "Dice": 0.45,
         "HD95": 0.15,
         "Sensitivity": 0.3,
-        "Specificity": 0.1
+        "Specificity": 0.1,
     }
-    ensemble_segmentation_tta(config.test_loader, models_dict, composite_score_weights, patient_id=patient_id)
+    ensemble_segmentation_tta(
+        config.test_loader, models_dict, composite_score_weights, patient_id=patient_id
+    )

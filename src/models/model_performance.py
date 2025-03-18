@@ -136,7 +136,9 @@ def compute_metrics(pred, gt):
                 com_mask[com_coords] = 1
 
                 # Convert CoM mask back to tensor.
-                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                com_mask_tensor = (
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                )
 
                 # Compute Hausdorff Distance between prediction and CoM mask.
                 mock_val = compute_hausdorff_distance(
@@ -162,7 +164,9 @@ def compute_metrics(pred, gt):
                 com_coords = tuple(map(int, map(round, com)))
                 com_mask[com_coords] = 1
 
-                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                com_mask_tensor = (
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                )
 
                 # Compute Hausdorff Distance between empty prediction and GT CoM mask.
                 mock_val = compute_hausdorff_distance(
@@ -270,9 +274,7 @@ def performance_estimation(
 
             # Apply softmax and convert to segmentation map
             seg = (
-                torch.nn.functional.softmax(logits, dim=0)
-                .argmax(dim=0)
-                .unsqueeze(0)
+                torch.nn.functional.softmax(logits, dim=0).argmax(dim=0).unsqueeze(0)
             )  # Shape: (H, W, D)
 
             pred_one_hot = [(seg == i).float() for i in range(0, 4)]
@@ -282,7 +284,7 @@ def performance_estimation(
                 gt_one_hot = gt.permute(1, 0, 2, 3, 4)
             else:
                 # Ground truth is not one-hot encoded, so create one-hot encoding.
-                gt_one_hot = [ (gt == i).float() for i in range(1, 4) ]
+                gt_one_hot = [(gt == i).float() for i in range(1, 4)]
                 gt_one_hot = torch.stack(gt_one_hot)
 
             print("GT shape: ", gt_one_hot.shape)
@@ -330,7 +332,7 @@ def performance_estimation(
                 }
             )
 
-            seg = seg.squeeze(0) # remove batch dimension
+            seg = seg.squeeze(0)  # remove batch dimension
 
             # Save segmentation
             # output_path = os.path.join(output_dir, f"segmentation_{patient_id}.nii.gz")
@@ -385,6 +387,6 @@ if __name__ == "__main__":
         use_final_split=True,
     )
     model, model_inferer = load_model(
-            models.swinunetr_model, config.model_paths["swinunetr"], config.device
-        )
+        models.swinunetr_model, config.model_paths["swinunetr"], config.device
+    )
     performance_estimation(val_loader, model_inferer, patient_id=patient_id)
