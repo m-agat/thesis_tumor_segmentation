@@ -5,6 +5,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 
+
 class ReversibleScaleIntensityd:
     def __init__(self, keys, factor):
         self.keys = keys
@@ -15,6 +16,7 @@ class ReversibleScaleIntensityd:
         data["image"] = data["image"] * (1 + self.factor)
         return data
 
+
 class InverseReversibleScaleIntensityd:
     def __init__(self, keys, factor):
         self.keys = keys
@@ -24,6 +26,7 @@ class InverseReversibleScaleIntensityd:
         # Divide by (1 + factor) to reverse the scaling
         data["image"] = data["image"] / (1 + self.factor)
         return data
+
 
 def get_augmentations():
     """

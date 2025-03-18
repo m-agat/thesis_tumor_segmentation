@@ -97,5 +97,5 @@ def minmax_uncertainties(uncertainty_map):
     if max_val - min_val == 0:
         return np.zeros_like(uncertainty_map)
 
-    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val) 
+    scaled_uncertainty_map = (uncertainty_map - min_val) / (max_val - min_val)
     return scaled_uncertainty_map

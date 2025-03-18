@@ -124,9 +124,7 @@ def compute_metrics(pred, gt):
 
     for i, dice_score in enumerate(dice_scores):
         if not_nans[i] == 0:  # Tissue is absent in ground truth
-            pred_empty = (
-                torch.sum(pred_stack[i]).item() == 0
-            )
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
             dice_scores[i] = 1.0 if pred_empty else 0.0
 
     # Compute HD95
@@ -223,9 +221,7 @@ def compute_metrics(pred, gt):
 
     for i in range(len(sensitivity)):
         if not_nans[i] == 0:  # Tissue is absent
-            pred_empty = (
-                torch.sum(pred_stack[i]).item() == 0
-            )
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
             sensitivity[i] = 1.0 if pred_empty else 0.0
             specificity[i] = 1.0
 
@@ -272,7 +268,10 @@ def save_average_metrics(metrics_list, filename):
 
 
 def ensemble_segmentation(
-    test_loader, models_dict, patient_id=None, output_dir="./output_segmentations/simple_avg"
+    test_loader,
+    models_dict,
+    patient_id=None,
+    output_dir="./output_segmentations/simple_avg",
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -318,7 +317,6 @@ def ensemble_segmentation(
             avg_logits = torch.mean(
                 torch.stack(logits_list), dim=0
             )  # Shape: (num_classes, H, W, D)
-
 
             # Apply softmax and convert to segmentation map
             seg = (
@@ -369,10 +367,12 @@ def ensemble_segmentation(
                 }
             )
 
-            seg = seg.squeeze(0) # remove batch dimension
+            seg = seg.squeeze(0)  # remove batch dimension
 
             # Save segmentation
-            output_path = os.path.join(output_dir, f"simple_avg_segmentation_{patient_id}.nii.gz")
+            output_path = os.path.join(
+                output_dir, f"simple_avg_segmentation_{patient_id}.nii.gz"
+            )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             # Display a middle slice
