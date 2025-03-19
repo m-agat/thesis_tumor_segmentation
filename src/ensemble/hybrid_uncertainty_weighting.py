@@ -20,9 +20,9 @@ import math
 sys.path.append("../")
 import models.models as models
 import config.config as config
-from utils.utils import AverageMeter
 from uncertainty.test_time_augmentation import tta_variance
 from uncertainty.test_time_dropout import ttd_variance, minmax_uncertainties
+from dataset import dataloaders
 
 #####################
 #### Load Models ####
@@ -157,6 +157,10 @@ def compute_metrics(pred, gt):
         reduction="none",
         compute_sample=False,
     )
+
+    # Convert MetaTensors to plain tensors if needed.
+    pred = [p.detach().clone() if hasattr(p, "detach") else p for p in pred]
+    gt = [g.detach().clone() if hasattr(g, "detach") else g for g in gt]
 
     pred_stack = torch.stack(pred)
     gt_stack = torch.stack(gt)
@@ -318,7 +322,7 @@ def ensemble_segmentation_ttd(
     composite_score_weights,
     n_iterations=10,
     patient_id=None,
-    output_dir="./output_segmentations/tta_ttd",
+    output_dir="./output_segmentations/hybrid",
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -350,13 +354,16 @@ def ensemble_segmentation_ttd(
     # Normalize weights per class
     for region in ["BG", "NCR", "ED", "ET"]:
         total_weight = sum(model_weights[region].values())
-        model_weights[region] = {
-            k: v / total_weight for k, v in model_weights[region].items()
-        }
-    print(f"Computed model weights per class: {model_weights}")
+        for model_name in model_weights[region]:
+            if model_name in ["attunet", "vnet"]:
+                model_weights[region][model_name] /= total_weight
+            else:
+                # reduce influence of segresnet and swinunetr ensuring that attunet and vnet will also meaningfully contribute
+                model_weights[region][model_name] /= total_weight
+
+    print(f"Computed model performance weights per class: {model_weights}")
 
     patient_metrics = []
-    epsilon = 1e-6  # for numerical stability
     with torch.no_grad():
         for batch_data in test_data_loader:
             image = batch_data["image"].to(config.device)
@@ -370,32 +377,20 @@ def ensemble_segmentation_ttd(
                 f"\nProcessing patient: {patient_id}\n",
             )
 
-            model_preds = []
-            model_voxel_weights = []
-
-            region_map = {
-                0: "BG",
-                1: "NCR",
-                2: "ED",
-                3: "ET",
-            }  # channel indices to region names
-            alpha = 1
-            beta = 0.75
-            epsilon = 1e-6
-            w_ttd = 0.75
-            w_tta = 0.35
+            w_ttd = 0.5
+            w_tta = 0.5
+            adjusted_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
+            model_uncertainties = []            
+            # Step 1: Compute adjusted weights for AttUNet & VNet (Performance × Uncertainty Scaling)
             for model_name, (model, inferer) in models_dict.items():
                 # Get dropout uncertainty (TTD)
-                ttd_mean, ttd_uncertainty = ttd_variance(
+                _, ttd_uncertainty = ttd_variance(
                     model, inferer, image, config.device, n_iterations=n_iterations
                 )
                 # Get augmentation uncertainty (TTA)
-                tta_mean, tta_uncertainty = tta_variance(
+                _, tta_uncertainty = tta_variance(
                     inferer, image, config.device, n_iterations=n_iterations
                 )
-
-                # Combine the predictions: here we simply average them.
-                hybrid_mean = (ttd_mean + tta_mean) / 2.0
 
                 # Normalize each uncertainty map (assumes minmax_uncertainties scales to 0-1).
                 ttd_uncertainty_norm = minmax_uncertainties(ttd_uncertainty)
@@ -405,81 +400,125 @@ def ensemble_segmentation_ttd(
                 hybrid_uncertainty = (
                     w_ttd * ttd_uncertainty_norm + w_tta * tta_uncertainty_norm
                 )
+                hybrid_uncertainty = np.power(
+                    np.squeeze(hybrid_uncertainty, axis=0), 0.5
+                )
+                model_uncertainties.append(hybrid_uncertainty)
 
-                # Remove the batch dimension: now shape becomes (num_classes, H, W, D)
-                hybrid_mean = np.squeeze(hybrid_mean, axis=0)
-                hybrid_uncertainty = np.squeeze(hybrid_uncertainty, axis=0)
+                if model_name in ["attunet", "vnet"]:
+                    for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
+                        if model_name == "attunet":
+                            alpha = {"BG": 0.2, "NCR": 0.6, "ED": 0.3, "ET": 0.7}[region]
+                        elif model_name == "vnet":
+                            alpha = {"BG": 0.2, "NCR": 0.6, "ED": 0.9, "ET": 0.7}[region]
+                        uncertainty_penalty = (1 - alpha * np.median(hybrid_uncertainty[idx]))
+                        adjusted_weights[region][model_name] = model_weights[region][model_name] * uncertainty_penalty
 
-                # For each channel, compute the effective voxel-wise weight using exponential decay.
-                effective_weight = np.empty_like(hybrid_uncertainty)
-                for ch in range(hybrid_mean.shape[0]):
-                    region = region_map.get(ch, None)
-                    if region is None:
-                        raise ValueError(f"Unexpected channel index {ch}.")
-                    perf_w = model_weights[region][model_name]
-                    # effective_weight[ch] = perf_w * (1/(1 + np.exp(alpha * (hybrid_uncertainty[ch] - beta))))
-                    effective_weight[ch] = perf_w / np.log(
-                        1 + alpha * hybrid_uncertainty[ch] + epsilon
-                    )
+            # Step 2: Include SegResNet & SwinUNETR with their original performance weights
+            for model_name in ["swinunetr", "segresnet"]:
+                for region in ["BG", "NCR", "ED", "ET"]:
+                    adjusted_weights[region][model_name] = model_weights[region][model_name]
 
-                model_preds.append(hybrid_mean)
-                model_voxel_weights.append(effective_weight)
+            # Step 3: Normalize weights per region
+            for region in ["BG", "NCR", "ED", "ET"]:
+                total_weight = sum(adjusted_weights[region].values())
+                for model_name in adjusted_weights[region]:
+                    adjusted_weights[region][model_name] /= total_weight
+                    print(
+                            f"Model: {model_name}, Region: {region}, Final Weight: {adjusted_weights[region][model_name]:.3f}"
+                        )
 
-            # Stack predictions and weights from all models.
-            # Shapes: (num_models, num_classes, H, W, D)
-            ensemble_preds = np.stack(model_preds, axis=0)
-            ensemble_weights = np.stack(model_voxel_weights, axis=0)
+            # Step 4: Apply final normalized weights to logits
+            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
 
-            # Compute weighted sum of predictions, voxelwise.
-            # Sum over models (axis=0) then normalize by sum of weights.
-            weighted_sum = np.sum(ensemble_preds * ensemble_weights, axis=0)
-            sum_weights = (
-                np.sum(ensemble_weights, axis=0) + epsilon
-            )  # avoid division by zero
-            fused_probabilities = (
-                weighted_sum / sum_weights
-            )  # shape: (num_classes, H, W, D)
+            for model_name, (model, inferer) in models_dict.items():
+                logits = inferer(image).squeeze(0)
 
-            # Final segmentation by taking argmax over channels.
-            seg = np.argmax(fused_probabilities, axis=0).astype(np.uint8)
-            seg = np.expand_dims(seg, axis=0)  # add batch dimension
+                # Apply normalized final weights
+                for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
+                    weight = torch.tensor(adjusted_weights[region][model_name], dtype=torch.float32, device=config.device)
+        
+                    # Ensure logits are tensors and apply weight
+                    logits_tensor = logits[idx] if isinstance(logits, torch.Tensor) else torch.tensor(logits[idx], dtype=torch.float32, device=config.device)
+                    
+                    weighted_logits[region].append(weight * logits_tensor)
 
-            pred_one_hot = [
-                torch.tensor((seg == i).astype(np.float32), device=config.device)
-                for i in range(1, 4)
+            # Fuse logits: weighted sum for each class
+            fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
+            fused_tumor = [
+                torch.sum(torch.stack(weighted_logits[region]), dim=0)
+                for region in ["NCR", "ED", "ET"]
             ]
-            gt_one_hot = [(gt == i).float() for i in range(1, 4)]
+            # Stack background with tumor channels so that final shape is (num_classes, H, W, D)
+            fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
+            # Apply softmax and compute segmentation map
+            seg = (
+                torch.nn.functional.softmax(fused_logits, dim=0)
+                .argmax(dim=0)
+                .unsqueeze(0)
+            )
+
+            # Get ensemble uncertainty
+            ensemble_uncertainty = np.zeros_like(model_uncertainties[0])  # Initialize empty uncertainty array
+
+            for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
+                model_weights = np.array([adjusted_weights[region][model_name] for model_name in models_dict.keys()])  # Get model weights for this sub-region
+                model_uncertainties = np.stack(model_uncertainties, axis=0)
+                model_uncertainties_region = model_uncertainties[:, idx]  # Extract uncertainties for this region
+
+                # Compute weighted mean uncertainty for this sub-region
+                weighted_uncertainty = np.average(model_uncertainties_region, axis=0, weights=model_weights)
+
+                # Compute weighted variance for uncertainty
+                weighted_variance = np.average((model_uncertainties_region - weighted_uncertainty)**2, axis=0, weights=model_weights)
+
+                # Store in final ensemble uncertainty map
+                ensemble_uncertainty[idx] = weighted_variance
+
+            pred_one_hot = [(seg == i).float() for i in range(0, 4)]
+            if gt.shape[1] == 4:
+                # Ground truth is already one-hot encoded (assume channel 0 is background).
+                # Extract channels 1,2,3 and permute to have shape [3, 1, H, W, D].
+                gt_one_hot = gt.permute(1, 0, 2, 3, 4)
+            else:
+                # Ground truth is not one-hot encoded, so create one-hot encoding.
+                gt_one_hot = [(gt == i).float() for i in range(1, 4)]
+                gt_one_hot = torch.stack(gt_one_hot)
 
             # Get performance metrics
             dice, hd95, sensitivity, specificity = compute_metrics(
                 pred_one_hot, gt_one_hot
             )
             print(
-                f"Dice NCR: {dice[0].item():.4f}, Dice ED: {dice[1].item():.4f}, Dice ET: {dice[2].item():.4f}\n",
-                f"HD95 NCR: {hd95[0].item():.2f}, HD95 ED: {hd95[1].item():.2f}, HD95 ET: {hd95[2].item():.2f}\n",
-                f"Sensitivity NCR: {sensitivity[0].item():.4f}, ED: {sensitivity[1].item():.4f}, ET: {sensitivity[2].item():.4f}\n",
-                f"Specificity NCR: {specificity[0].item():.4f}, ED: {specificity[1].item():.4f}, ET: {specificity[2].item():.4f}\n",
+                f"Dice BG: {dice[0].item():.4f}, Dice NCR: {dice[1].item():.4f}, Dice ED: {dice[2].item():.4f}, Dice ET: {dice[3].item():.4f}\n"
+                f"HD95 BG: {hd95[0].item():.2f}, HD95 NCR: {hd95[1].item():.2f}, HD95 ED: {hd95[2].item():.2f}, HD95 ET: {hd95[3].item():.2f}\n"
+                f"Sensitivity BG: {sensitivity[0].item():.4f}, NCR: {sensitivity[1].item():.4f}, ED: {sensitivity[2].item():.4f}, ET: {sensitivity[3].item():.4f}\n"
+                f"Specificity BG: {specificity[0].item():.4f}, NCR: {specificity[1].item():.4f}, ED: {specificity[2].item():.4f}, ET: {specificity[3].item():.4f}\n"
             )
 
             patient_metrics.append(
                 {
                     "patient_id": patient_id,
-                    "Dice NCR": dice[0].item(),
-                    "Dice ED": dice[1].item(),
-                    "Dice ET": dice[2].item(),
-                    "Dice overall": np.mean(dice),
-                    "HD95 NCR": hd95[0].item(),
-                    "HD95 ED": hd95[1].item(),
-                    "HD95 ET": hd95[2].item(),
-                    "HD95 overall": np.mean(hd95),
-                    "Sensitivity NCR": sensitivity[0].item(),
-                    "Sensitivity ED": sensitivity[1].item(),
-                    "Sensitivity ET": sensitivity[2].item(),
-                    "Sensitivity overall": np.mean(sensitivity),
-                    "Specificity NCR": specificity[0].item(),
-                    "Specificity ED": specificity[1].item(),
-                    "Specificity ET": specificity[2].item(),
-                    "Specificity overall": np.mean(specificity),
+                    "Dice BG": dice[0].item(),
+                    "Dice NCR": dice[1].item(),
+                    "Dice ED": dice[2].item(),
+                    "Dice ET": dice[3].item(),
+                    "Dice overall": float(np.nanmean(dice)),
+                    "HD95 BG": hd95[0].item(),
+                    "HD95 NCR": hd95[1].item(),
+                    "HD95 ED": hd95[2].item(),
+                    "HD95 ET": hd95[3].item(),
+                    "HD95 overall": float(np.nanmean(hd95)),
+                    "Sensitivity BG": sensitivity[0].item(),
+                    "Sensitivity NCR": sensitivity[1].item(),
+                    "Sensitivity ED": sensitivity[2].item(),
+                    "Sensitivity ET": sensitivity[3].item(),
+                    "Sensitivity overall": float(np.nanmean(sensitivity)),
+                    "Specificity BG": specificity[0].item(),
+                    "Specificity NCR": specificity[1].item(),
+                    "Specificity ED": specificity[2].item(),
+                    "Specificity ET": specificity[3].item(),
+                    "Specificity overall": float(np.nanmean(specificity)),
                 }
             )
 
@@ -487,18 +526,14 @@ def ensemble_segmentation_ttd(
 
             # Save segmentation
             output_path = os.path.join(
-                output_dir, f"tta_ttd_segmentation_{patient_id}.nii.gz"
+                output_dir, f"hybrid_segmentation_{patient_id}.nii.gz"
             )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
-            # Display a middle slice
-            # visualize_segmentation(seg.cpu().numpy(), patient_id)
-
-            start_time = time.time()
             torch.cuda.empty_cache()
 
-    csv_path = os.path.join(output_dir, "tta_ttd_patient_metrics.csv")
-    json_path = os.path.join(output_dir, "tta_ttd_average_metrics.json")
+    csv_path = os.path.join(output_dir, "hybrid_patient_metrics.csv")
+    json_path = os.path.join(output_dir, "hybrid_average_metrics.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
 
@@ -522,7 +557,7 @@ def visualize_segmentation(segmentation, patient_id):
     plt.imshow(segmentation[:, :, slice_index], cmap="gray")
     plt.title(f"Segmentation Slice at Index {slice_index}")
     plt.axis("off")
-    plt.savefig(f"tta_ttd_segmentation_{patient_id}_slice.png")
+    plt.savefig(f"hybrid_segmentation_{patient_id}_slice.png")
     # plt.show()
 
 
@@ -531,8 +566,16 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    # patient_id = "01556"
+    patient_id = "00113"
     models_dict = load_all_models()
+    _, val_loader = dataloaders.get_loaders(
+        batch_size=config.batch_size,
+        json_path=config.json_path,
+        basedir=config.root_dir,
+        fold=None,
+        roi=config.roi,
+        use_final_split=True,
+    )
     composite_score_weights = {
         "Dice": 0.45,
         "HD95": 0.15,
@@ -540,5 +583,5 @@ if __name__ == "__main__":
         "Specificity": 0.1,
     }
     ensemble_segmentation_ttd(
-        config.test_loader, models_dict, composite_score_weights, n_iterations=5
+        val_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=patient_id
     )
