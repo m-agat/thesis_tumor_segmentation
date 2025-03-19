@@ -107,6 +107,11 @@ def compute_metrics(pred, gt):
     dice_scores, not_nans = dice_metric.aggregate()
     dice_scores = dice_scores.cpu().numpy()
 
+    for i, dice_score in enumerate(dice_scores):
+        if not_nans[i] == 0:  # Tissue is absent in ground truth
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
+            dice_scores[i] = 1.0 if pred_empty else 0.0
+
     # Compute HD95.
     hd95 = compute_hausdorff_distance(
         y_pred=pred_stack,
@@ -189,6 +194,12 @@ def compute_metrics(pred, gt):
     sensitivity, specificity = confusion_metric.aggregate()
     sensitivity = sensitivity.squeeze(0).cpu().numpy()
     specificity = specificity.squeeze(0).cpu().numpy()
+
+    for i in range(len(sensitivity)):
+        if not_nans[i] == 0:  # Tissue is absent
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
+            sensitivity[i] = 1.0 if pred_empty else 0.0
+            specificity[i] = 1.0
 
     return dice_scores, hd95, sensitivity, specificity
 
