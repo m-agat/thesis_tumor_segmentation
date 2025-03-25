@@ -115,6 +115,22 @@ def save_average_metrics(metrics_list, filename):
 
     print(f"Saved average test set metrics to {filename}")
 
+def minmax_scale(uncertainty_map):
+    """
+    Apply min-max scaling separately to each sub-region.
+    """
+    scaled_uncertainty_map = uncertainty_map.copy()  # Avoid modifying original data
+
+    for idx, region in enumerate(["NCR", "ED", "ET"], start=1):  # Ensure correct indexing
+        min_val = np.min(scaled_uncertainty_map[idx])
+        max_val = np.max(scaled_uncertainty_map[idx])
+
+        if max_val - min_val == 0:
+            scaled_uncertainty_map[idx] = np.zeros_like(scaled_uncertainty_map[idx])
+        else:
+            scaled_uncertainty_map[idx] = (scaled_uncertainty_map[idx] - min_val) / (max_val - min_val)
+
+    return scaled_uncertainty_map
 
 def summarize_uncertainty(
     data_loader,
@@ -170,24 +186,29 @@ def summarize_uncertainty(
                 )
 
                 # Normalize each uncertainty map (assumes minmax_uncertainties scales to 0-1).
-                ttd_uncertainty_norm = minmax_uncertainties(ttd_uncertainty)
-                tta_uncertainty_norm = minmax_uncertainties(tta_uncertainty)
+                ttd_uncertainty_norm = minmax_scale(np.squeeze(ttd_uncertainty, axis=0))
+                tta_uncertainty_norm = minmax_scale(np.squeeze(tta_uncertainty, axis=0))
 
                 # Compute the hybrid uncertainty by averaging the normalized uncertainties.
                 hybrid_uncertainty = (
                     w_ttd * ttd_uncertainty_norm + w_tta * tta_uncertainty_norm
                 )
 
-                # Remove the batch dimension: now shape becomes (num_classes, H, W, D)
-                tta_uncertainty_norm = np.power(
-                    np.squeeze(tta_uncertainty_norm, axis=0), 0.5
-                )
-                ttd_uncertainty_norm = np.power(
-                    np.squeeze(ttd_uncertainty_norm, axis=0), 0.5
-                )
-                hybrid_uncertainty = np.power(
-                    np.squeeze(hybrid_uncertainty, axis=0), 0.5
-                )
+                hybrid_uncertainty = minmax_scale(hybrid_uncertainty)
+
+                print({
+                        "Patient ID": patient_id,
+                        "Model": model_name,
+                        "TTA NCR": np.median(tta_uncertainty_norm[1]),
+                        "TTA ED": np.median(tta_uncertainty_norm[2]),
+                        "TTA ET": np.median(tta_uncertainty_norm[3]),
+                        "TTD NCR": np.median(ttd_uncertainty_norm[1]),
+                        "TTD ED": np.median(ttd_uncertainty_norm[2]),
+                        "TTD ET": np.median(ttd_uncertainty_norm[3]),
+                        "Hybrid NCR": np.median(hybrid_uncertainty[1]),
+                        "Hybrid ED": np.median(hybrid_uncertainty[2]),
+                        "Hybrid ET": np.median(hybrid_uncertainty[3]),
+                    })
 
                 uncertainty_data.append(
                     {
@@ -241,16 +262,16 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "01331"
-    _, val_loader = dataloaders.get_loaders(
-        batch_size=config.batch_size,
-        json_path=config.json_path,
-        basedir=config.root_dir,
-        fold=None,
-        roi=config.roi,
-        use_final_split=True,
-    )
+    # patient_id = "01331"
+    # _, val_loader = dataloaders.get_loaders(
+    #     batch_size=config.batch_size,
+    #     json_path=config.json_path,
+    #     basedir=config.root_dir,
+    #     fold=None,
+    #     roi=config.roi,
+    #     use_final_split=True,
+    # )
     models_dict = load_all_models()
     summarize_uncertainty(
-        val_loader, models_dict, n_iterations=20, patient_id=patient_id
+        config.test_loader, models_dict, n_iterations=5
     )

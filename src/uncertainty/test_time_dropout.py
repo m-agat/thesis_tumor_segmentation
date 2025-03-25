@@ -18,7 +18,7 @@ def enable_dropout(model):
             module.train()
 
 
-def ttd_variance(model, model_inferer, input_data, device, n_iterations=20):
+def ttd_variance(model, model_inferer, input_data, device, n_iterations=20, on_step=None):
     """
     Run test-time dropout to estimate uncertainty.
 
@@ -36,8 +36,11 @@ def ttd_variance(model, model_inferer, input_data, device, n_iterations=20):
     enable_dropout(model)  # Enable dropout layers
 
     all_outputs = []
-    with torch.no_grad(), torch.cuda.amp.autocast():
-        for _ in tqdm(range(n_iterations), desc="Predicting with TTD.."):
+    with torch.no_grad(), torch.amp.autocast('cuda'):
+        for i in tqdm(range(n_iterations), desc="Predicting with TTD.."):
+            # update progress
+            if on_step:
+                on_step(i+1, n_iterations)
             output = model_inferer(input_data).to(device)
             all_outputs.append(output.cpu().numpy())
 
@@ -69,7 +72,7 @@ def ttd_entropy(model, input_data, model_inferer, device, n_iterations=20):
     enable_dropout(model)  # Enable dropout layers
 
     all_outputs = []
-    with torch.no_grad(), torch.cuda.amp.autocast():
+    with torch.no_grad(), torch.amp.autocast('cuda'):
         for _ in tqdm(range(n_iterations), desc="Predicting with TTD.."):
             output = torch.sigmoid(model_inferer(input_data)).to(device)
             all_outputs.append(output.cpu().numpy())

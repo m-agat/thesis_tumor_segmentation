@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 
-correlations_path = "../uncertainty/outputs/correlations/spearman_correlations_composite_score.csv"
+correlations_path = "../uncertainty/outputs/correlations/spearman_correlations_minmax.csv"
 correlations_df = pd.read_csv(correlations_path)
 
 # Pivot the data to create a heatmap-friendly format
