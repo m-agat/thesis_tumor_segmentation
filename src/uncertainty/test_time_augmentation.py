@@ -103,7 +103,7 @@ def reverse_augmentation(output, inverse_aug):
     return reversed_output
 
 
-def tta_variance(model_inferer, input_data, device, n_iterations=10):
+def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=None):
     """
     Run test-time augmentation with reversible transformations for uncertainty estimation.
     Args:
@@ -118,8 +118,12 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10):
     augmentations = get_augmentations()  # Get list of augmentations with inverses
     augmented_outputs = []
 
-    with torch.no_grad():
-        for _ in tqdm(range(n_iterations), desc="Predicting with TTA.."):
+    with torch.no_grad(), torch.amp.autocast('cuda'):
+        for i in tqdm(range(n_iterations), desc="Predicting with TTA.."):
+            # update progress
+            if on_step:
+                on_step(i+1, n_iterations)
+
             # Randomly pick an augmentation
             aug_entry = np.random.choice(augmentations)
             aug = aug_entry["aug"]
