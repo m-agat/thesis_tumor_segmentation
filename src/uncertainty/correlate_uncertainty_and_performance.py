@@ -5,7 +5,7 @@ import os
 models = ["attunet", "segresnet", "swinunetr", "vnet"]
 subregions = ["NCR", "ED", "ET"]
 uncertainties = ["TTA", "TTD", "Hybrid"]
-patient_uncertainties_path = "./outputs/uncertainties/patient_uncertainties.csv"
+patient_uncertainties_path = "./outputs/uncertainties/patient_uncertainties_minmax_val.csv"
 
 patient_uncertainties = pd.read_csv(patient_uncertainties_path)
 
@@ -44,7 +44,7 @@ for model_name in models:
             )
 
 correlation_df = pd.DataFrame(correlation_results)
-correlation_csv_path = "./outputs/correlations/spearman_correlations_composite_score.csv"
+correlation_csv_path = "./outputs/correlations/spearman_correlations_minmax.csv"
 os.makedirs(os.path.dirname(correlation_csv_path), exist_ok=True)
 correlation_df.to_csv(correlation_csv_path, index=False)
 
