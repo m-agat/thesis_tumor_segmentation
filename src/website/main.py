@@ -8,7 +8,8 @@ import torch
 from monai import data
 import glob
 import plotly.graph_objects as go
-
+import subprocess
+import re 
 
 # Ensemble model
 import final_ensemble_model as fem
@@ -75,7 +76,10 @@ st.set_page_config(
 # --------------------------------------------------------------------------------
 # Utility Functions
 # --------------------------------------------------------------------------------
-
+@st.cache_data(show_spinner=False)
+def load_slice_lazy(path, slice_idx):
+    img = nib.load(path)
+    return img.dataobj[..., slice_idx]
 
 def convert_dicom_to_nifti(dicom_files, output_filename="converted.nii"):
     """
@@ -274,14 +278,34 @@ def find_available_outputs(output_dir="./output_segmentations"):
     outputs = {}
 
     def extract_id(path):
-        # E.g., "hybrid_segmentation_00657.nii.gz" -> "00657"
+        """
+        Extracts the patient ID from a filename by capturing tokens that consist solely
+        of digits or uppercase letters, while ignoring tokens that are exactly "NCR", "ED", or "ET".
+        
+        Examples:
+        "preproc_ARE_flair.nii"         -> returns "ARE"
+        "uncertainty_NCR_00657.nii.gz"    -> returns "00657"
+        "preproc_NCR_ABC.nii"             -> returns "ABC"
+        """
         fname = os.path.basename(path)
-        # Split on '_' and remove ".nii.gz"
-        # This is just a simple approach. Use regex if you prefer.
-        base, _ = os.path.splitext(fname)
-        base, _ = os.path.splitext(base)  # remove .gz if present
-        parts = base.split("_")
-        return parts[-1]  # last chunk is the ID
+        # Capture tokens that follow an underscore and consist of digits and/or uppercase letters.
+        tokens = re.findall(r'_([\dA-Z]+)', fname)
+        
+        # Define tokens to ignore.
+        ignore = {"NCR", "ED", "ET"}
+        
+        # Filter tokens: Allow numeric tokens or alphabetic tokens not in ignore.
+        valid_tokens = []
+        for token in tokens:
+            if token.isdigit():
+                valid_tokens.append(token)
+            elif token.isalpha() and token not in ignore:
+                valid_tokens.append(token)
+        
+        # Return the last valid token if available (you could also choose the first, depending on your naming scheme).
+        if valid_tokens:
+            return valid_tokens[-1]
+        return "UNKNOWN"
 
     # Fill the dictionary
     for f in seg_files:
@@ -606,42 +630,59 @@ def rescale_intensity_sitk(sitk_image):
     """
     return sitk.RescaleIntensity(sitk_image, outputMinimum=0.0, outputMaximum=1.0)
 
-
-def realign_images_to_reference(nifti_paths):
+def skull_strip_with_hd_bet(input_path, output_path=None):
     """
-    Realigns all images in 'nifti_paths' to the first one (considered the reference).
-    Uses a basic Euler3D transform initializer with MeanSquares and linear interpolation.
+    Run HD-BET skull stripping on a single NIfTI file.
+    """
+    if output_path is None:
+        base = os.path.basename(input_path).replace(".nii", "").replace(".gz", "")
+        output_path = os.path.join(os.getcwd(), f"{base}_skullstripped.nii.gz")
 
-    Parameters:
-    -----------
-    nifti_paths : list of str
-        Paths to the NIfTI files.
+    try:
+        subprocess.run([
+            "hd-bet",
+            "-i", input_path,
+            "-o", output_path,
+            "-device", "cuda"  # Change to "cpu" if needed
+        ], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[HD-BET ERROR] {e}")
+        return input_path  # fallback: return original file path
 
-    Returns:
-    --------
-    list of str
-        List of paths to the newly resampled and rescaled images.
+    return output_path
+
+def realign_images_to_reference(nifti_paths, progress_callback=None):
+    """
+    Skull-strips and realigns all images in 'nifti_paths' to the first one (as reference).
+    Optionally updates a Streamlit progress bar.
     """
     if not nifti_paths:
         return []
 
-    # The first file is the reference
-    reference_path = nifti_paths[0]
+    stripped_paths = []
+    total_steps = len(nifti_paths) * 2  # Skull stripping + registration
+    current_step = 0
+
+    for p in nifti_paths:
+        stripped = skull_strip_with_hd_bet(p)
+        stripped_paths.append(stripped)
+        current_step += 1
+        if progress_callback:
+            progress_callback(current_step / total_steps)
+
+    reference_path = stripped_paths[0]
     ref_img_sitk = sitk.ReadImage(reference_path, sitk.sitkFloat32)
     ref_img_sitk = rescale_intensity_sitk(ref_img_sitk)
 
     output_paths = []
-    ref_output_path = os.path.join(
-        os.getcwd(), f"preproc_{os.path.basename(reference_path)}"
-    )
+    ref_output_path = os.path.join(os.getcwd(), f"preproc_{os.path.basename(reference_path)}")
     sitk.WriteImage(ref_img_sitk, ref_output_path)
     output_paths.append(ref_output_path)
 
-    for path in nifti_paths[1:]:
+    for path in stripped_paths[1:]:
         mov_img_sitk = sitk.ReadImage(path, sitk.sitkFloat32)
         mov_img_sitk = rescale_intensity_sitk(mov_img_sitk)
 
-        # Basic geometry-based initial transform
         initial_transform = sitk.CenteredTransformInitializer(
             ref_img_sitk,
             mov_img_sitk,
@@ -651,9 +692,7 @@ def realign_images_to_reference(nifti_paths):
 
         registration_method = sitk.ImageRegistrationMethod()
         registration_method.SetMetricAsMeanSquares()
-        registration_method.SetOptimizerAsGradientDescent(
-            learningRate=1.0, numberOfIterations=40
-        )
+        registration_method.SetOptimizerAsGradientDescent(learningRate=1.0, numberOfIterations=40)
         registration_method.SetOptimizerScalesFromPhysicalShift()
         registration_method.SetInitialTransform(initial_transform, inPlace=False)
         registration_method.SetInterpolator(sitk.sitkLinear)
@@ -663,7 +702,6 @@ def realign_images_to_reference(nifti_paths):
             sitk.Cast(mov_img_sitk, sitk.sitkFloat32),
         )
 
-        # Resample the moving image into the reference space
         aligned_img = sitk.Resample(
             mov_img_sitk,
             ref_img_sitk,
@@ -677,8 +715,11 @@ def realign_images_to_reference(nifti_paths):
         sitk.WriteImage(aligned_img, out_path)
         output_paths.append(out_path)
 
-    return output_paths
+        current_step += 1
+        if progress_callback:
+            progress_callback(current_step / total_steps)
 
+    return output_paths
 
 # --------------------------------------------------------------------------------
 # Create Streamlit tabs
@@ -725,7 +766,6 @@ tab1, results = st.tabs(["Data Upload & Preview", "Results"])
 # --------------------------------------------------------------------------------
 
 with tab1:
-    # Intro / Instructions
     st.header("Welcome to the Brain Tumor Segmentation App! 👋")
     st.markdown("""
     **What does this app do?**  
@@ -736,35 +776,26 @@ with tab1:
     **How to use it:**  
     1. Upload your MRI files on the sidebar (up to 4).
     2. (Optional) Click **Preprocess** to run intensity rescaling and registration.
-    3. Click **Run Ensemble Segmentation** to generate the tumor segmentation.
+    3. Click **Run Segmentation** to generate the tumor segmentation.
     4. Switch to the **Results** tab to visualize the output.
 
     **Supported Modalities (BraTS style):** Flair, T1ce, T1, T2.  
     If fewer than 4 files are provided, the app duplicates some files to ensure it can still run.
-    """)
+    """)  
 
     st.sidebar.header("File Upload")
 
-    # 1) Upload up to 4 files
     uploaded_files = st.sidebar.file_uploader(
         "Upload up to 4 files (NIfTI or DICOM):",
         type=["nii", "nii.gz", "dcm"],
         accept_multiple_files=True,
     )
 
-    # 2) Preprocess and Run Segmentation buttons in the sidebar
     preproc_clicked = st.sidebar.button("Preprocess", key="btn_preprocesar_sidebar")
-    run_seg_clicked = st.sidebar.button("Run Ensemble Segmentation", key="btn_run_segmentation")
-
-    # 3) Horizontal separator
+    run_seg_clicked = st.sidebar.button("Run Tumor Segmentation", key="btn_run_segmentation")
     st.sidebar.markdown("---")
 
-    # 4) Optional Ground Truth upload
-    gt_file = st.sidebar.file_uploader(
-        "Upload Ground Truth (optional)", type=["nii", "nii.gz"]
-    )
-
-    # Save the GT path into session_state if provided
+    gt_file = st.sidebar.file_uploader("Upload Ground Truth (optional)", type=["nii", "nii.gz"])
     if gt_file is not None:
         tmp_gt_path = os.path.join(os.getcwd(), f"uploaded_{gt_file.name}")
         gt_file.seek(0)
@@ -774,8 +805,19 @@ with tab1:
     else:
         st.session_state["gt_path"] = None
 
+    # --- 🧠 Session state setup ---
+    if "preproc_paths" not in st.session_state:
+        st.session_state["preproc_paths"] = None
+    if "last_uploaded_files" not in st.session_state:
+        st.session_state["last_uploaded_files"] = []
+
     if uploaded_files:
-        # Deduplicate files by name
+        uploaded_filenames = [f.name for f in uploaded_files]
+        if uploaded_filenames != st.session_state["last_uploaded_files"]:
+            st.session_state["preproc_paths"] = None
+            st.session_state["last_uploaded_files"] = uploaded_filenames
+
+        # --- 🧠 Dedupe and convert ---
         unique_file_names = set()
         unique_files = []
         for f in uploaded_files:
@@ -785,8 +827,6 @@ with tab1:
 
         st.write("### File Status")
         nifti_files = []
-
-        # Check format and convert if DICOM
         for file in unique_files:
             file.seek(0)
             file_format = check_file_format(file)
@@ -803,48 +843,47 @@ with tab1:
             else:
                 st.error(f"Unrecognized format: {file.name}")
 
-        # Ensure we have 4 files by duplicating if fewer
         if len(nifti_files) < 4:
             st.warning("Fewer than 4 files detected. Duplicating some files to proceed.")
             while len(nifti_files) < 4 and len(nifti_files) > 0:
                 nifti_files.append(nifti_files[-1])
-        elif len(nifti_files) == 4:
-            st.success("4 files have been successfully loaded.")
         elif len(nifti_files) > 4:
             st.warning("More than 4 files uploaded. Only the first 4 will be used.")
             nifti_files = nifti_files[:4]
 
-        # Convert any file-like objects to file paths and reorder them
-        # so that the final list is [Flair, T1ce, T1, T2].
         actual_nifti_paths = []
         for item in nifti_files:
             if isinstance(item, str):
                 actual_nifti_paths.append(item)
             else:
-                # It's a Streamlit UploadedFile, so write it to disk
                 item.seek(0)
                 tmp_path = os.path.join(os.getcwd(), item.name)
                 with open(tmp_path, "wb") as out:
                     out.write(item.read())
                 actual_nifti_paths.append(tmp_path)
 
-        # Reorder them to match the standard BraTS order
         actual_nifti_paths = reorder_modalities(actual_nifti_paths)
 
-        # Process files:
-        # If the Preprocess button is clicked, run registration/rescaling.
-        # Otherwise, simply keep them as raw for segmentation.
+        # --- Run preprocessing ---
         if preproc_clicked and len(actual_nifti_paths) > 0:
-            st.info("Starting preprocessing (intensity rescale + registration)...")
-            preproc_paths = realign_images_to_reference(actual_nifti_paths)
-            st.success("Preprocessing completed. Generated files:")
-            for p in preproc_paths:
-                st.write(f"- {p}")
-        else:
+            st.info("Starting preprocessing (skull stripping + registration)...")
+            preproc_bar = st.progress(0, text="Preprocessing...")
+
+            def update_progress(pct):
+                preproc_bar.progress(int(pct * 100), text=f"Preprocessing... {int(pct * 100)}%")
+
+            result = realign_images_to_reference(actual_nifti_paths, progress_callback=update_progress)
+            st.session_state["preproc_paths"] = result
+            preproc_bar.progress(100, text="✅ Preprocessing complete!")
+            st.success("Preprocessing completed.")
+
+        preproc_paths = st.session_state.get("preproc_paths")
+        if preproc_paths is None:
+            # Use the raw uploaded NIfTI paths
             preproc_paths = actual_nifti_paths
 
+        # --- Run segmentation ---
         st.markdown("---")
-        # Run Ensemble Segmentation button (optional)
         if run_seg_clicked:
             st.subheader("Running Segmentation")
             if not preproc_paths or not os.path.exists(preproc_paths[0]):
@@ -855,86 +894,48 @@ with tab1:
                 st.info("Creating test loader...")
                 test_loader = create_test_loader(preproc_paths)
                 patient_id = fem.extract_patient_id(preproc_paths[0]) or None
-
-                # Create a progress bar
-                st.info("Running ensemble segmentation (this may take a few moments)...")
                 progress_bar = st.progress(0, text="Running segmentation...")
-
                 fem.ensemble_segmentation(
                     test_loader, 
                     models_dict, 
                     composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, 
-                    n_iterations=5, 
+                    n_iterations=10, 
                     progress_bar=progress_bar  
                 )
                 st.success("Segmentation complete! Check the 'Results' tab for output.")
 
-        # Show preview of uploaded files in columns
+        # --- Image previews ---
         st.write("## Preview of Uploaded Files")
-        if unique_files:
-            # 1) Load all volumes first
-            volumes = []
-            for uf in unique_files:
-                uf.seek(0)
-                fmt = check_file_format(uf)
 
-                if fmt == "dicom":
-                    uf.seek(0)
-                    ds = pydicom.dcmread(uf)
-                    volume = ds.pixel_array
-                    # If only 2D, add a dummy axis so shape is (1, height, width)
-                    if volume.ndim == 2:
-                        volume = volume[np.newaxis, ...]
-                    volumes.append((uf.name, volume, "DICOM"))
-                
-                elif fmt == "nifti":
-                    uf.seek(0)
-                    tmp_path = os.path.join(os.getcwd(), uf.name)
-                    with open(tmp_path, "wb") as out:
-                        out.write(uf.read())
-                    volume_data = nib.load(tmp_path).get_fdata()
-                    # If only 2D, add a dummy axis so shape is (1, height, width)
-                    if volume_data.ndim == 2:
-                        volume_data = volume_data[np.newaxis, ...]
-                    volumes.append((uf.name, volume_data, "NIfTI"))
-                
-                else:
-                    st.error(f"Unrecognized format for {uf.name}. Skipping preview.")
-                    volumes.append((uf.name, None, None))
+        st.subheader("🧠 Original Scans")
+        example_img = nib.load(actual_nifti_paths[0])
+        max_slices_orig = example_img.shape[-1]
+        slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
+        cols = st.columns(len(actual_nifti_paths))
+        for i, path in enumerate(actual_nifti_paths):
+            with cols[i]:
+                slice_img = load_slice_lazy(path, slice_idx_orig)
+                st.write(f"**{os.path.basename(path)}**")
+                fig, ax = plt.subplots(figsize=(5, 5))
+                ax.imshow(slice_img, cmap="gray")
+                ax.axis("off")
+                st.pyplot(fig)
 
-            # 2) Find the maximum number of slices among all volumes (assuming last dim = slices)
-            max_slices = 0
-            for _, vol, _ in volumes:
-                if vol is not None:
-                    max_slices = max(max_slices, vol.shape[-1])
-
-            if max_slices == 0:
-                st.warning("No valid volumes found to preview.")
-            else:
-                # 3) Single global slider for all images
-                global_sidx = 0
-                if max_slices > 1:
-                    global_sidx = st.slider("Slice Index", 0, max_slices - 1, max_slices // 2, key="slice_index_unique")
-
-                # 4) Display volumes side by side
-                cols = st.columns(len(volumes))
-                for i, (fname, vol, fmt) in enumerate(volumes):
+        if preproc_clicked and preproc_paths and all(os.path.exists(p) for p in preproc_paths):
+            if (preproc_paths and preproc_paths != actual_nifti_paths and all(os.path.exists(p) for p in preproc_paths)):
+                st.subheader("🧼 Preprocessed Scans")
+                example_img_pre = nib.load(preproc_paths[0])
+                max_slices_pre = example_img_pre.shape[-1]
+                slice_idx_pre = st.slider("Slice Index (Preprocessed)", 0, max_slices_pre - 1, max_slices_pre // 2, key="preproc_slider")
+                cols = st.columns(len(preproc_paths))
+                for i, path in enumerate(preproc_paths):
                     with cols[i]:
-                        if vol is None:
-                            st.error(f"Could not preview {fname}.")
-                        else:
-                            # Clamp the slice index to the valid range for this volume
-                            local_depth = vol.shape[-1]
-                            sidx = min(global_sidx, local_depth - 1)
-
-                            # 5) Show the figure
-                            #    Remove or override the 'title' if you want to avoid duplication.
-                            st.write(f"**{fname}**")  # If you want to show the filename above the figure
-                            fig = show_simple(vol, sidx, title="")  # no extra title
-                            st.pyplot(fig)
-        else:
-            st.info("Please upload up to 4 files in NIfTI or DICOM format.")
-
+                        slice_img = load_slice_lazy(path, slice_idx_pre)
+                        st.write(f"**{os.path.basename(path)}**")
+                        fig, ax = plt.subplots(figsize=(5, 5))
+                        ax.imshow(slice_img, cmap="gray")
+                        ax.axis("off")
+                        st.pyplot(fig)
 
 # --------------------------------------------------------------------------------
 # TAB 2: RESULTS
