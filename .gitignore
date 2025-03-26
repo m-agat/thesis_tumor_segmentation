@@ -29,6 +29,7 @@ figures/
 *.tar.gz
 *.tar
 events.out.tfevents.*
+*.nii 
 
 # C extensions
 *.so
