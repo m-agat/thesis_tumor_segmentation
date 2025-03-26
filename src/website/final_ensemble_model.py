@@ -87,8 +87,34 @@ def save_segmentation_as_nifti(predicted_segmentation, ref_img, output_path):
     print(f"Segmentation saved to {output_path}")
 
 def extract_patient_id(path):
-    numbers = re.findall(r"\d+", path)
-    return numbers[-1] if numbers else None
+    """
+    Extracts the patient ID from a filename by capturing tokens that consist solely
+    of digits or uppercase letters, while ignoring tokens that are exactly "NCR", "ED", or "ET".
+    
+    Examples:
+      "preproc_ARE_flair.nii"         -> returns "ARE"
+      "uncertainty_NCR_00657.nii.gz"    -> returns "00657"
+      "preproc_NCR_ABC.nii"             -> returns "ABC"
+    """
+    fname = os.path.basename(path)
+    # Capture tokens that follow an underscore and consist of digits and/or uppercase letters.
+    tokens = re.findall(r'_([\dA-Z]+)', fname)
+    
+    # Define tokens to ignore.
+    ignore = {"NCR", "ED", "ET"}
+    
+    # Filter tokens: Allow numeric tokens or alphabetic tokens not in ignore.
+    valid_tokens = []
+    for token in tokens:
+        if token.isdigit():
+            valid_tokens.append(token)
+        elif token.isalpha() and token not in ignore:
+            valid_tokens.append(token)
+    
+    # Return the last valid token if available (you could also choose the first, depending on your naming scheme).
+    if valid_tokens:
+        return valid_tokens[-1]
+    return "UNKNOWN"
 
 def save_uncertainty_as_nifti(uncertainty_map, ref_img, output_path):
     """
