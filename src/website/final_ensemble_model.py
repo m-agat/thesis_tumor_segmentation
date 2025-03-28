@@ -86,6 +86,18 @@ def save_segmentation_as_nifti(predicted_segmentation, ref_img, output_path):
     nib.save(seg_img, output_path)
     print(f"Segmentation saved to {output_path}")
 
+def save_probability_map_as_nifti(prob_map, ref_img, output_path):
+    """
+    Save a probability map (float32) as a NIfTI file.
+    """
+    if isinstance(prob_map, torch.Tensor):
+        prob_map = prob_map.cpu().numpy()
+    # Make sure to keep the float values
+    prob_map = prob_map.astype(np.float32)
+    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=ref_img.header)
+    nib.save(prob_img, output_path)
+    print(f"Probability map saved to {output_path}")
+
 def extract_patient_id(path):
     """
     Extracts the patient ID from a filename by capturing tokens that consist solely
@@ -259,6 +271,7 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
                     adjusted_weights[region][model_name] /= total
                     print(f"Normalized weight for {model_name} in {region}: {adjusted_weights[region][model_name]:.3f}")
 
+            # SEGMENTATION
             # Weighted logits fusion
             weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
             for model_name in models_dict.keys():
@@ -269,11 +282,18 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
             fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
             fused_tumor = [torch.sum(torch.stack(weighted_logits[region]), dim=0) for region in ["NCR", "ED", "ET"]]
             fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
-            seg = torch.nn.functional.softmax(fused_logits, dim=0).argmax(dim=0)
+            softmax_seg = torch.nn.functional.softmax(fused_logits, dim=0)
+            seg = softmax_seg.argmax(dim=0)
 
+            # Save softmax outputs 
+            softmax_output_path = os.path.join(output_dir, f"hybrid_softmax_{patient_id}.nii.gz")
+            save_probability_map_as_nifti(softmax_seg, ref_img, softmax_output_path)
+
+            # Save segmentation
             seg_output_path = os.path.join(output_dir, f"hybrid_segmentation_{patient_id}.nii.gz")
             save_segmentation_as_nifti(seg, ref_img, seg_output_path)
 
+            # SAVE UNCERTAINTY
             # Fuse uncertainty maps for tumor regions
             fused_uncertainty = {}
             for idx, region in enumerate(["NCR", "ED", "ET"]):
