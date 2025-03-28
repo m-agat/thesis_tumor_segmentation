@@ -10,6 +10,7 @@ import glob
 import plotly.graph_objects as go
 import subprocess
 import re 
+import tempfile 
 
 # Ensemble model
 import final_ensemble_model as fem
@@ -273,8 +274,8 @@ def find_available_outputs(output_dir="./output_segmentations"):
     ed_files  = glob.glob(os.path.join(output_dir, "uncertainty_ED_*.nii.gz"))
     et_files  = glob.glob(os.path.join(output_dir, "uncertainty_ET_*.nii.gz"))
     glob_files  = glob.glob(os.path.join(output_dir, "uncertainty_global_*.nii.gz"))
-
-
+    softmax_files = glob.glob(os.path.join(output_dir, "hybrid_softmax_*.nii.gz"))
+   
     outputs = {}
 
     def extract_id(path):
@@ -323,73 +324,11 @@ def find_available_outputs(output_dir="./output_segmentations"):
     for f in glob_files:
         pid = extract_id(f)
         outputs.setdefault(pid, {})["uncertainty_global"] = f
+    for f in softmax_files:
+        pid = extract_id(f)
+        outputs.setdefault(pid, {})["softmax"] = f
 
     return outputs
-
-def overlay_segmentation(brain_slice, seg_slice, alpha=0.3, segmentation_colors={1: [1, 0, 0], 2: [0, 1, 0], 3: [0, 0, 1],}):
-    """
-    Overlays a segmentation mask onto a brain slice.
-    Each tissue label is blended with its specified color.
-    
-    Parameters:
-      - brain_slice: 2D array (grayscale) of the original scan.
-      - seg_slice: 2D array of segmentation labels.
-      - alpha: blending factor.
-      - segmentation_colors: dict mapping label -> RGB color.
-    
-    Returns:
-      A 3D array representing an RGB image with the overlay.
-    """
-    bmin, bmax = brain_slice.min(), brain_slice.max()
-    brain_norm = (brain_slice - bmin) / (bmax - bmin + 1e-8)
-    brain_rgb = np.stack([brain_norm]*3, axis=-1)
-
-    overlay_rgb = brain_rgb.copy()
-
-    # Loop through each label in the segmentation and apply its color
-    for label, color in segmentation_colors.items():
-        mask = seg_slice == label
-        # Blend each pixel that belongs to this label
-        overlay_rgb[mask] = (1 - alpha) * overlay_rgb[mask] + alpha * np.array(color)
-    
-    return overlay_rgb
-
-def overlay_single_tissue(brain_slice, seg_slice, tissue, alpha=0.3, seg_color=(1,0,0)):
-    """
-    Overlays a segmentation mask (seg_slice) on top of a grayscale brain_slice.
-    seg_slice is expected to be label-based or binary (0=bg, >0=fg).
-    Returns an RGB image (H,W,3).
-    """
-    bmin, bmax = brain_slice.min(), brain_slice.max()
-    brain_norm = (brain_slice - bmin) / (bmax - bmin + 1e-8)
-    brain_rgb = np.stack([brain_norm]*3, axis=-1)
-
-    overlay_rgb = brain_rgb.copy()
-    mask = seg_slice == tissue
-    overlay_rgb[mask] = (1 - alpha)*overlay_rgb[mask] + alpha*np.array(seg_color)
-    return overlay_rgb
-
-def overlay_uncertainty(brain_slice, unc_slice, alpha=0.5, cmap=plt.cm.jet):
-    """
-    Overlays an uncertainty map (unc_slice) on top of a grayscale brain_slice.
-    unc_slice should be in [0,1] or you can rescale it first.
-    Returns an RGB image (H,W,3).
-    """
-    bmin, bmax = brain_slice.min(), brain_slice.max()
-    brain_norm = (brain_slice - bmin) / (bmax - bmin + 1e-8)
-    brain_rgb = np.stack([brain_norm]*3, axis=-1)
-
-    # Normalize unc_slice
-    umin, umax = unc_slice.min(), unc_slice.max()
-    if umax - umin < 1e-8:
-        unc_norm = np.zeros_like(unc_slice)
-    else:
-        unc_norm = (unc_slice - umin)/(umax - umin)
-    unc_colored = cmap(unc_norm)[..., :3]  # (H,W,3)
-
-    # Alpha blend
-    overlay_rgb = (1 - alpha)*brain_rgb + alpha*unc_colored
-    return overlay_rgb
 
 def interactive_segmentation_figure(brain_slice, seg_slice):
     fig = go.Figure()
@@ -533,65 +472,90 @@ from scipy.ndimage import (
 )
 from scipy.spatial.distance import pdist, squareform
 
-
-def count_tumors(mask, min_voxel_size=6, min_distance=40):
+def compute_simple_volumes(seg_data, dx, dy, dz):
     """
-    Counts tumors in a 3D binary mask. Each connected component above a size threshold
-    is considered. If multiple tumors are close (below min_distance in centroid space),
-    they are considered the same.
+    Compute the total volumes (in cm³) for each BraTS-like label:
+      1 -> Necrotic Core (NCR)
+      2 -> Edema (ED)
+      3 -> Enhancing Tumor (ET)
 
-    Parameters:
-    -----------
-    mask : np.ndarray
-        3D binary array (e.g., [D,H,W]) where non-zero indicates tumor.
-    min_voxel_size : int
-        Minimum connected component size in voxels to be considered valid.
-    min_distance : float
-        Minimum distance (in voxel units) between centroids to consider them separate.
+    Parameters
+    ----------
+    seg_data : np.ndarray
+        A 3D array of integer labels, typically {0,1,2,3}.
+    dx, dy, dz : float
+        The voxel spacing (in mm) along each dimension. 
+        e.g., from seg_nii.header.get_zooms().
 
-    Returns:
-    --------
-    (int, list)
-        The number of separate tumors, and a list of volumes (in cm^3) of each.
+    Returns
+    -------
+    (float, float, float)
+        The total volumes for NCR, ED, ET in cubic centimeters.
     """
+    # Each voxel volume in mm³
+    voxel_vol_mm3 = dx * dy * dz
+
+    # Convert to cm³ by dividing by 1000
+    voxel_vol_cm3 = voxel_vol_mm3 / 1000.0
+
+    # Count how many voxels belong to each label
+    ncr_voxels = np.sum(seg_data == 1)
+    ed_voxels  = np.sum(seg_data == 2)
+    et_voxels  = np.sum(seg_data == 3)
+
+    # Multiply counts by voxel volume
+    ncr_volume = ncr_voxels * voxel_vol_cm3
+    ed_volume  = ed_voxels  * voxel_vol_cm3
+    et_volume  = et_voxels  * voxel_vol_cm3
+
+    return ncr_volume, ed_volume, et_volume
+
+def count_tumors_with_volume(mask_3d, voxel_vol_mm3, min_voxel_size=6, min_distance=40):
+    """
+    Similar to your count_tumors, but uses voxel_vol_mm3 to get real cm³ volumes.
+    """
+    from scipy.ndimage import label, generate_binary_structure, binary_dilation, center_of_mass
+    from scipy.spatial.distance import pdist, squareform
+
     struct = generate_binary_structure(3, 3)
-    dilated_mask = binary_dilation(mask, structure=struct, iterations=1)
+    # dilated_mask = binary_dilation(mask_3d, structure=struct, iterations=1)
+    dilated_mask = mask_3d  
     labeled_mask, num_features = label(dilated_mask, structure=struct)
 
     # Filter out small connected components
-    large_regions = [
-        i
-        for i in range(1, num_features + 1)
-        if (labeled_mask == i).sum() > min_voxel_size
-    ]
-    if len(large_regions) == 0:
+    large_regions = []
+    for i in range(1, num_features + 1):
+        voxel_count = (labeled_mask == i).sum()
+        if voxel_count > min_voxel_size:
+            large_regions.append(i)
+
+    if not large_regions:
         return 0, []
 
     if len(large_regions) == 1:
-        volume_voxels = (labeled_mask == large_regions[0]).sum()
-        volume_cm3 = volume_voxels / 1000
+        # Only one region
+        voxel_count = (labeled_mask == large_regions[0]).sum()
+        volume_cm3 = (voxel_count * voxel_vol_mm3) / 1000.0
         return 1, [volume_cm3]
 
-    centroids = [
-        center_of_mass(mask, labeled_mask, region_id) for region_id in large_regions
-    ]
+    # More than one region -> check distances
+    centroids = [center_of_mass(mask_3d, labeled_mask, r) for r in large_regions]
     distances = squareform(pdist(centroids))
+
     separated_tumors = []
     for i, region_id in enumerate(large_regions):
-        close = any(
-            distances[i, j] < min_distance for j in range(len(large_regions)) if i != j
-        )
+        # If it's not "too close" to any other region, we keep it separate
+        close = any(distances[i, j] < min_distance for j in range(len(large_regions)) if i != j)
         if not close:
             separated_tumors.append(region_id)
 
-    tumor_volumes = []
+    volumes_cm3 = []
     for region_id in separated_tumors:
-        volume_voxels = (labeled_mask == region_id).sum()
-        volume_cm3 = volume_voxels / 1000
-        tumor_volumes.append(volume_cm3)
+        voxel_count = (labeled_mask == region_id).sum()
+        vol_cm3 = (voxel_count * voxel_vol_mm3) / 1000.0
+        volumes_cm3.append(vol_cm3)
 
-    return len(separated_tumors), tumor_volumes
-
+    return len(separated_tumors), volumes_cm3
 
 def calculate_valid_slices(masks):
     """
@@ -621,6 +585,35 @@ def calculate_valid_slices(masks):
     return 0, 0
 
 
+def create_thresholded_nifti(unc_data, threshold, original_nii):
+    """
+    Create two NIfTI images from the uncertainty map:
+      - One for voxels with uncertainty >= threshold.
+      - One for voxels with uncertainty < threshold.
+    The original NIfTI is used for affine and header information.
+    """
+    # Preserve uncertainty values above threshold, set others to zero
+    data_above = np.where(unc_data >= threshold, unc_data, 0).astype(np.float32)
+    # Preserve uncertainty values below threshold, set others to zero
+    data_below = np.where(unc_data < threshold, unc_data, 0).astype(np.float32)
+    
+    nii_above = nib.Nifti1Image(data_above, affine=original_nii.affine, header=original_nii.header)
+    nii_below = nib.Nifti1Image(data_below, affine=original_nii.affine, header=original_nii.header)
+    return nii_above, nii_below
+
+def nifti_to_bytes(nii_img):
+    """
+    Save a NIfTI image to a temporary file and return its contents as bytes.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".nii.gz", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        nib.save(nii_img, tmp_path)
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+    finally:
+        os.remove(tmp_path)
+    return data
 # --------------------------------------------------------------------------------
 # SimpleITK-based registration and intensity rescaling (optional)
 # --------------------------------------------------------------------------------
@@ -889,9 +882,9 @@ with tab1:
             if not preproc_paths or not os.path.exists(preproc_paths[0]):
                 st.error("Preprocessed (or raw) file not found.")
             else:
-                st.info("Loading ensemble models...")
+                st.info("Loading the model...")
                 models_dict = load_ensemble_models()
-                st.info("Creating test loader...")
+                st.info("Loading data...")
                 test_loader = create_test_loader(preproc_paths)
                 patient_id = fem.extract_patient_id(preproc_paths[0]) or None
                 progress_bar = st.progress(0, text="Running segmentation...")
@@ -946,6 +939,7 @@ with results:
     if not all_outputs:
         st.warning("No segmentations found in ./output_segmentations. Please run a segmentation first.")
     else:
+        # Select patient ID and load original file if provided
         patient_ids = sorted(all_outputs.keys())
         chosen_pid = st.selectbox("Select a patient ID:", patient_ids)
         original_file = st.file_uploader("Upload the original scan for overlay (NIfTI):", type=["nii","nii.gz"])
@@ -958,110 +952,208 @@ with results:
                 out.write(original_file.read())
             original_path = tmp_orig
             brain_data = nib.load(original_path).get_fdata()
+
+        # Retrieve segmentation and uncertainty file paths
         seg_path = all_outputs[chosen_pid].get("seg", None)
         ncr_path = all_outputs[chosen_pid].get("uncertainty_NCR", None)
         ed_path  = all_outputs[chosen_pid].get("uncertainty_ED", None)
         et_path  = all_outputs[chosen_pid].get("uncertainty_ET", None)
         global_unc_path = all_outputs[chosen_pid].get("uncertainty_global", None)
+
+        # Checkboxes to toggle segmentation / uncertainty
         show_seg = st.checkbox("Show Segmentation", value=True)
+        show_prob = st.checkbox("Show Probability Map", value=False)
         show_unc = st.checkbox("Show Uncertainty", value=False)
-        seg_type = st.selectbox("Segmentation Tissue", ["Necrotic Core", "Edema", "Enhancing Tumor", "All"])
-        unc_type = st.selectbox("Uncertainty Tissue", ["Necrotic Core", "Edema", "Enhancing Tumor", "All"])
+
+        col_seg_options, col_prob_options, col_unc_options = st.columns(3)
+
+        # -----------------------------------------------------------
+        # SEGMENTATION OPTIONS
+        # -----------------------------------------------------------
+        selected_tissues = []
+        if show_seg:
+            with col_seg_options:
+                st.markdown("### Select Tissues to Display")
+                show_ncr = st.checkbox("Necrotic Core (Label 1)", value=False)
+                show_ed  = st.checkbox("Edema (Label 2)", value=False)
+                show_et  = st.checkbox("Enhancing Tumor (Label 3)", value=False)
+                
+                if show_ncr:
+                    selected_tissues.append((1, (1, 0, 0)))  # Label 1, red
+                if show_ed:
+                    selected_tissues.append((2, (0, 1, 0)))  # Label 2, green
+                if show_et:
+                    selected_tissues.append((3, (0, 0, 1)))  # Label 3, blue
+            
+            if brain_data is None:
+                st.warning("Select a brain scan to show the segmentation")
+        
+        # -----------------------------------------------------------
+        # PROBABILITY OPTIONS
+        # -----------------------------------------------------------
+        selected_probs = []
+        prob_path = all_outputs[chosen_pid].get("softmax", None)
+        if show_prob and prob_path:
+            with col_prob_options:
+                st.markdown("### Select Probabilities to Display")
+
+                show_prob_ncr = st.checkbox("NCR Probability", value=False)
+                show_prob_ed  = st.checkbox("ED Probability", value=False)
+                show_prob_et  = st.checkbox("ET Probability", value=False)
+
+                softmax_data = nib.load(prob_path).get_fdata()  # shape: [4, H, W, D]
+                if show_prob_ncr:
+                    selected_probs.append(("NCR", softmax_data[1]))  # label 1
+                if show_prob_ed:
+                    selected_probs.append(("ED",  softmax_data[2]))  # label 2
+                if show_prob_et:
+                    selected_probs.append(("ET",  softmax_data[3]))  # label 3
+        elif show_prob and not prob_path:
+            st.warning("No softmax probability file found for this patient.")
+
+        # -----------------------------------------------------------
+        # UNCERTAINTY OPTIONS
+        # -----------------------------------------------------------
+        selected_uncertainties = []
+        if show_unc:
+            with col_unc_options:
+                st.markdown("#### Select Uncertainty Map(s) to Display")
+                show_unc_ncr = st.checkbox("NCR Uncertainty", value=False)
+                show_unc_ed  = st.checkbox("ED Uncertainty", value=False)
+                show_unc_et  = st.checkbox("ET Uncertainty", value=False)
+                
+                if show_unc_ncr and ncr_path:
+                    selected_uncertainties.append(("NCR", nib.load(ncr_path).get_fdata()))
+                if show_unc_ed and ed_path:
+                    selected_uncertainties.append(("ED", nib.load(ed_path).get_fdata()))
+                if show_unc_et and et_path:
+                    selected_uncertainties.append(("ET", nib.load(et_path).get_fdata()))
+            
+            if brain_data is None:
+                st.warning("Select a brain scan to show uncertainty maps")
+
+        # Warn if seg file is missing
         if show_seg and not seg_path:
             st.warning("No segmentation file found for this patient.")
-        if show_unc:
-            if unc_type == "Necrotic Core" and not ncr_path:
-                st.warning("No Necrotic Core uncertainty found for this patient.")
-            elif unc_type == "Edema" and not ed_path:
-                st.warning("No Edema uncertainty found for this patient.")
-            elif unc_type == "Enhancing Tumor" and not et_path:
-                st.warning("No Enhancing Tumor uncertainty found for this patient.")
-            elif unc_type == "All" and not global_unc_path:
-                st.warning("No global uncertainty found for this patient.")
-        if brain_data is None:
-            st.info("Upload an original scan to see overlays. Otherwise, we'll just show the raw segmentation/uncertainty.")
-        depth = 0
+
+        # Determine how many slices
         if brain_data is not None:
             depth = brain_data.shape[-1]
         else:
             fallback_data = None
-            if seg_path:
-                fallback_data = nib.load(seg_path).get_fdata()
-            elif ncr_path:
-                fallback_data = nib.load(ncr_path).get_fdata()
-            elif ed_path:
-                fallback_data = nib.load(ed_path).get_fdata()
-            elif et_path:
-                fallback_data = nib.load(et_path).get_fdata()
-            elif global_unc_path:
-                fallback_data = nib.load(global_unc_path).get_fdata()
-            if fallback_data is not None:
-                depth = fallback_data.shape[-1]
+            for possible in [seg_path, ncr_path, ed_path, et_path, global_unc_path]:
+                if possible:
+                    fallback_data = nib.load(possible).get_fdata()
+                    break
+            depth = fallback_data.shape[-1] if fallback_data is not None else 0
+
         if depth > 0:
-            slice_idx = st.slider("Slice Index", 0, depth-1, depth//2)
+            st.markdown("#### Slice Index")
+            slice_idx = st.slider("Slice Index", 0, depth - 1, depth // 2, key="slice_slider")
         else:
             st.warning("No data found to slice.")
             slice_idx = 0
-        
+
+        # -----------------------------------------------------------
+        # OPACITY SLIDERS
+        # -----------------------------------------------------------
+        # We show them only if there's a reason (seg or unc is on)
+        if show_seg or show_unc:
+            st.markdown("### Overlay Settings")
+            col1, col2, col3 = st.columns(3)
+            seg_opacity = col1.slider("Segmentation Opacity", 0.0, 1.0, 0.4, 0.01, key="seg_op_slider")
+            prob_opacity = col2.slider("Probability Opacity", 0.0, 1.0, 0.4, 0.01, key="prob_op_slider")
+            unc_opacity = col3.slider("Uncertainty Opacity", 0.0, 1.0, 0.4, 0.01, key="unc_op_slider")
+        else:
+            seg_opacity = 0.4
+            prob_opacity = 0.4
+            unc_opacity = 0.4
+
         seg_figure = None
         unc_figure = None
+        threshold = None
+
+        # -----------------------------------------------------------
+        # BUILD THE FIGURES
+        # -----------------------------------------------------------
         if brain_data is not None:
             brain_slice = brain_data[..., slice_idx]
-            if show_seg and seg_path:
-                seg_data = nib.load(seg_path).get_fdata()
-                seg_slice = seg_data[..., slice_idx]
-                if seg_type == "Necrotic Core" and ncr_path:
-                    seg_figure = interactive_single_tissue_figure(brain_slice, seg_slice, tissue=1, seg_color=(1,0,0), alpha=0.3)
-                elif seg_type == "Edema" and ed_path:
-                    seg_figure = interactive_single_tissue_figure(brain_slice, seg_slice, tissue=2, seg_color=(0,1,0), alpha=0.3)
-                elif seg_type == "Enhancing Tumor" and et_path:
-                    seg_figure = interactive_single_tissue_figure(brain_slice, seg_slice, tissue=3, seg_color=(0,0,1), alpha=0.3)
-                elif seg_type == "All":
-                    seg_figure = interactive_segmentation_figure(brain_slice, seg_slice)
-                else:
-                    seg_figure = go.Figure(go.Heatmap(z=brain_slice, colorscale='gray', showscale=False))
-                    seg_figure.update_layout(width=400, height=400, margin=dict(l=0,r=0,t=0,b=0))
-                seg_figure.update_layout(
-                    width=400,
-                    height=450,  # slightly taller to allow room for caption
-                    margin=dict(l=0, r=0, t=20, b=80),  # extra bottom margin
-                    annotations=[
-                        go.layout.Annotation(
-                            text=f"Segmentation for {chosen_pid}, Slice {slice_idx}",
-                            x=0.5,            # center horizontally
-                            y=-0.15,          # a negative value to push it below the plot
-                            xref="paper",
-                            yref="paper",
-                            xanchor="center",
-                            yanchor="top",
-                            showarrow=False,
-                            font=dict(size=16)
-                        )
-                    ]
-                )
 
-            if show_unc:
-                unc_data = None
-                if unc_type == "Necrotic Core" and ncr_path:
-                    unc_data = nib.load(ncr_path).get_fdata()
-                elif unc_type == "Edema" and ed_path:
-                    unc_data = nib.load(ed_path).get_fdata()
-                elif unc_type == "Enhancing Tumor" and et_path:
-                    unc_data = nib.load(et_path).get_fdata()
-                elif unc_type == "All" and global_unc_path:
-                    unc_data = nib.load(global_unc_path).get_fdata()
-                if unc_data is not None:
-                    unc_slice = unc_data[..., slice_idx]
-                    unc_figure = interactive_uncertainty_figure(brain_slice, unc_slice, alpha=0.5)
-                    unc_figure.update_layout(
+            # --- SEG FIG ---
+            if show_seg and seg_path:
+                if selected_tissues:
+                    seg_data = nib.load(seg_path).get_fdata()
+                    seg_slice = seg_data[..., slice_idx]
+                    seg_figure = go.Figure()
+
+                    # Base slice in grayscale
+                    seg_figure.add_trace(go.Heatmap(
+                        z=brain_slice,
+                        colorscale='gray',
+                        showscale=False,
+                        hoverinfo='skip'
+                    ))
+
+                    # Define a label name mapping
+                    label_names = {
+                        1: "Necrotic Core",
+                        2: "Edema",
+                        3: "Enhancing Tumor"
+                    }
+
+                    # Sort tissues by label, so label 1 is drawn first, etc.
+                    selected_tissues.sort(key=lambda x: x[0])
+
+                    # We'll build overlay traces + a composite hover array
+                    overlay_traces = []
+                    composite_text = np.full(seg_slice.shape, "", dtype='<U50')
+
+                    for label_val, color in selected_tissues:
+                        # Mask out the pixels that belong to this label
+                        mask = (seg_slice == label_val)
+
+                        # For the visible overlay, we keep 1.0 at labeled pixels, 0.0 elsewhere
+                        z_data = mask.astype(float)
+
+                        # Build a color overlay trace (no hover)
+                        r, g, b = color
+                        rgba = f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)'
+                        overlay_traces.append(go.Heatmap(
+                            z=z_data,
+                            colorscale=[[0, 'rgba(0,0,0,0)'], [1, rgba]],
+                            opacity=seg_opacity,  # slider value
+                            hoverinfo='skip',
+                            showscale=False
+                        ))
+
+                        # Fill in the composite text for these pixels
+                        label_str = label_names.get(label_val, f"Tissue {label_val}")
+                        composite_text[mask] = label_str
+
+                    # Add the overlay traces
+                    for trace in overlay_traces:
+                        seg_figure.add_trace(trace)
+
+                    # Finally, add a single transparent trace to display hover text
+                    seg_figure.add_trace(go.Heatmap(
+                        z=brain_slice,  # dummy data for shape
+                        text=composite_text,
+                        hoverinfo='text',
+                        hovertemplate="%{text}<extra></extra>",
+                        colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']],
+                        opacity=1,
+                        showscale=False
+                    ))
+
+                    seg_figure.update_layout(
                         width=400,
-                        height=450,  # slightly taller to allow room for caption
-                        margin=dict(l=0, r=0, t=20, b=80),  # extra bottom margin
+                        height=450,
+                        margin=dict(l=0, r=0, t=20, b=80),
                         annotations=[
                             go.layout.Annotation(
-                                text=f"Uncertainty for {chosen_pid}, Slice {slice_idx}",
-                                x=0.5,            # center horizontally
-                                y=-0.15,          # a negative value to push it below the plot
+                                text=f"Segmentation for {chosen_pid}, Slice {slice_idx}",
+                                x=0.5,
+                                y=-0.15,
                                 xref="paper",
                                 yref="paper",
                                 xanchor="center",
@@ -1069,45 +1161,325 @@ with results:
                                 showarrow=False,
                                 font=dict(size=16)
                             )
-                        ]
+                        ],
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False, autorange='reversed')
                     )
-                    
-            if seg_figure is not None and unc_figure is not None:
-                col_seg, col_unc = st.columns(2)
-                with col_seg:
-                    st.plotly_chart(seg_figure, use_container_width=False)
-                with col_unc:
-                    st.plotly_chart(unc_figure, use_container_width=False)
-            elif seg_figure is not None:
-                col1, col2, col3 = st.columns([1,6,1])
-                with col2:
-                    st.plotly_chart(seg_figure, use_container_width=False)
-            elif unc_figure is not None:
-                col1, col2, col3 = st.columns([1,6,1])
-                with col2:
-                    st.plotly_chart(unc_figure, use_container_width=False)
-        else:
-            if show_seg and seg_path:
-                seg_data = nib.load(seg_path).get_fdata()
-                seg_slice = seg_data[..., slice_idx]
-                col1, col2, col3 = st.columns([1,6,1])
-                with col2:
-                    st.image(seg_slice, caption=f"Segmentation for {chosen_pid}, Slice {slice_idx}",
-                            width=400, clamp=True)
-            if show_unc:
-                unc_data = None
-                if unc_type == "Necrotic Core" and ncr_path:
-                    unc_data = nib.load(ncr_path).get_fdata()
-                elif unc_type == "Edema" and ed_path:
-                    unc_data = nib.load(ed_path).get_fdata()
-                elif unc_type == "Enhancing Tumor" and et_path:
-                    unc_data = nib.load(et_path).get_fdata()
-                elif unc_type == "All" and global_unc_path:
-                    unc_data = nib.load(global_unc_path).get_fdata()
-                if unc_data is not None:
-                    unc_slice = unc_data[..., slice_idx]
-                    col1, col2, col3 = st.columns([1,6,1])
-                    with col2:
-                        st.image(unc_slice, caption=f"Uncertainty for {chosen_pid}, Slice {slice_idx}",
-                            width=400, clamp=True)
+                else:
+                    # If no tissues chosen, just show grayscale
+                    seg_figure = go.Figure(go.Heatmap(
+                        z=brain_slice,
+                        colorscale="gray",
+                        showscale=False
+                    ))
+                    seg_figure.update_layout(
+                        width=400,
+                        height=450,
+                        margin=dict(l=0, r=0, t=20, b=80),
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False, autorange='reversed')
+                    )
 
+            # --- PROBABILITY MAP FIG ---
+            prob_figure = None
+            if show_prob:
+                if selected_probs:
+                    prob_figure = go.Figure()
+
+                    # Grayscale background
+                    prob_figure.add_trace(go.Heatmap(
+                        z=brain_slice,
+                        colorscale="gray",
+                        showscale=False,
+                        hoverinfo="skip"
+                    ))
+
+                    # Overlay traces
+                    color_map = {
+                        "NCR": (255, 0, 0),
+                        "ED":  (0, 255, 0),
+                        "ET":  (0, 0, 255)
+                    }
+
+                    # Create a composite text array to store hover information for each pixel
+                    composite_text = np.full(brain_slice.shape, "", dtype="<U200")
+
+                    for label, volume in selected_probs:
+                        prob_slice = volume[..., slice_idx]
+                        r, g, b = color_map[label]
+                        rgba = f"rgba({r},{g},{b},1)"
+
+                        # Format hover string for each pixel
+                        formatted = np.vectorize(lambda p: f"{label} Prob: {p:.3f}")(prob_slice)
+
+                        # Append formatted probability to composite_text (separating multiple labels with a line break)
+                        composite_text = np.where(
+                            composite_text == "",
+                            formatted,
+                            np.char.add(np.char.add(composite_text, "<br>"), formatted)
+                        )
+
+                        # Add the probability overlay for the tissue
+                        prob_figure.add_trace(go.Heatmap(
+                            z=prob_slice,
+                            colorscale=[[0, "rgba(0,0,0,0)"], [1, rgba]],
+                            opacity=prob_opacity, 
+                            hoverinfo="skip",
+                            showscale=False
+                        ))
+
+                    # Add a transparent trace to show composite hover text
+                    prob_figure.add_trace(go.Heatmap(
+                        z=brain_slice,  # dummy data for shape
+                        text=composite_text,
+                        hoverinfo='text',
+                        hovertemplate="%{text}<extra></extra>",
+                        colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']],
+                        opacity=1,
+                        showscale=False
+                    ))
+
+                    prob_figure.update_layout(
+                        width=400,
+                        height=450,
+                        margin=dict(l=0, r=0, t=20, b=80),
+                        annotations=[
+                            go.layout.Annotation(
+                                text=f"Probability Maps for {chosen_pid}, Slice {slice_idx}",
+                                x=0.5,
+                                y=-0.15,
+                                xref="paper",
+                                yref="paper",
+                                xanchor="center",
+                                yanchor="top",
+                                showarrow=False,
+                                font=dict(size=16)
+                            )
+                        ],
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False, autorange="reversed")
+                    )
+                else:
+                    # If no tissues chosen, just show grayscale
+                    prob_figure = go.Figure(go.Heatmap(
+                        z=brain_slice,
+                        colorscale="gray",
+                        showscale=False
+                    ))
+                    prob_figure.update_layout(
+                        width=400,
+                        height=450,
+                        margin=dict(l=0, r=0, t=20, b=80),
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False, autorange='reversed')
+                    )
+
+
+
+            # --- UNC FIG ---
+            if show_unc:
+                if selected_uncertainties:
+                    unc_figure = go.Figure()
+
+                    # Base slice in grayscale
+                    unc_figure.add_trace(go.Heatmap(
+                        z=brain_slice,
+                        colorscale='gray',
+                        showscale=False,
+                        hoverinfo='skip'
+                    ))
+
+                    st.markdown("#### Uncertainty Threshold")
+
+                    # 1) Add a radio button to select "Below" or "Above"
+                    threshold_mode = st.radio(
+                        "Threshold Mode:",
+                        ["Below", "Above"],
+                        index=0,  # default selection
+                        horizontal=True  # optional for horizontal layout
+                    )
+
+                    # 2) Keep the slider for the numeric threshold
+                    threshold = st.slider(
+                        "Only show uncertainty values BELOW or ABOVE this threshold",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.5,
+                        step=0.01,
+                        key="threshold_slider"
+                    )
+
+                    # Colors for each map
+                    unc_colors = {
+                        "NCR": (1, 0, 0),   # red
+                        "ED":  (0, 1, 0),   # green
+                        "ET":  (0, 0, 1),   # blue
+                    }
+
+                    # We'll build overlay traces + a composite hover text array
+                    overlay_traces = []
+                    composite_text = np.full(brain_slice.shape, "", dtype='<U50')
+
+                    for label, unc_data in selected_uncertainties:
+                        # 3) Apply the threshold based on user’s choice
+                        if threshold_mode == "Below":
+                            unc_thresholded = np.where(unc_data <= threshold, unc_data, 0.0)
+                        else:  # "Above"
+                            unc_thresholded = np.where(unc_data >= threshold, unc_data, 0.0)
+
+                        unc_slice = unc_thresholded[..., slice_idx]
+
+                        # Format the uncertainty values
+                        fmt = np.vectorize(lambda x: f"{x:.3f}")
+                        formatted_values = fmt(unc_slice)
+
+                        # Build an overlay trace
+                        r, g, b = unc_colors[label]
+                        rgba = f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)'
+                        trace = go.Heatmap(
+                            z=unc_slice,
+                            colorscale=[[0, 'rgba(0,0,0,0)'], [1, rgba]],
+                            opacity=unc_opacity,
+                            hoverinfo='skip',
+                            showscale=False
+                        )
+                        overlay_traces.append(trace)
+
+                        # Build composite hover text
+                        label_str_array = np.full(brain_slice.shape, f"{label}: ", dtype='<U50')
+                        composite_text = np.where(
+                            composite_text == "",
+                            np.char.add(label_str_array, formatted_values),
+                            np.char.add(composite_text, np.char.add("<br>", np.char.add(label_str_array, formatted_values)))
+                        )
+
+                    # Add overlay traces
+                    for trace in overlay_traces:
+                        unc_figure.add_trace(trace)
+
+                    # Add one composite trace for hover info
+                    unc_figure.add_trace(go.Heatmap(
+                        z=brain_slice,
+                        text=composite_text,
+                        hoverinfo='text',
+                        hovertemplate="%{text}<extra></extra>",
+                        colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']],
+                        opacity=1,
+                        showscale=False
+                    ))
+
+                    unc_figure.update_layout(
+                        width=400,
+                        height=450,
+                        margin=dict(l=0, r=0, t=20, b=80),
+                        annotations=[
+                            go.layout.Annotation(
+                                text=f"Uncertainty Maps for {chosen_pid}, Slice {slice_idx}",
+                                x=0.5,
+                                y=-0.15,
+                                xref="paper",
+                                yref="paper",
+                                xanchor="center",
+                                yanchor="top",
+                                showarrow=False,
+                                font=dict(size=16)
+                            )
+                        ],
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False, autorange='reversed')
+                    )
+                else:
+                    # If no tissues chosen, just show grayscale
+                    unc_figure = go.Figure(go.Heatmap(
+                        z=brain_slice,
+                        colorscale="gray",
+                        showscale=False
+                    ))
+                    unc_figure.update_layout(
+                        width=400,
+                        height=450,
+                        margin=dict(l=0, r=0, t=20, b=80),
+                        xaxis=dict(visible=False),
+                        yaxis=dict(visible=False, autorange='reversed')
+                    )
+
+
+            # --- DISPLAY FIGURES ---
+            cols_to_use = []
+            if show_seg and seg_figure: cols_to_use.append(("Segmentation", seg_figure))
+            if show_prob and prob_figure: cols_to_use.append(("Probabilities", prob_figure))
+            if show_unc and unc_figure: cols_to_use.append(("Uncertainty", unc_figure))
+
+            if cols_to_use:
+                plot_cols = st.columns(len(cols_to_use))
+                for i, ((label, fig), col) in enumerate(zip(cols_to_use, plot_cols)):
+                    with col:
+                        st.markdown(f"#### {label}")
+                        st.plotly_chart(fig, use_container_width=False, key=f"{label.lower()}_chart_{i}")
+
+
+            # Tumor volumes, etc...
+            if seg_path is not None:
+                seg_nii = nib.load(seg_path)
+                seg_data = seg_nii.get_fdata()
+                dx, dy, dz = seg_nii.header.get_zooms()
+                ncr_vol, ed_vol, et_vol = compute_simple_volumes(seg_data, dx, dy, dz)
+                total_vol = ncr_vol + ed_vol + et_vol
+
+                st.subheader("Tumor Volumes")
+                col_ncr, col_ed, col_et, col_total = st.columns(4)
+                with col_ncr:
+                    st.metric(label="NCR Volume", value=f"{ncr_vol:.2f} cm³")
+                with col_ed:
+                    st.metric(label="Edema Volume", value=f"{ed_vol:.2f} cm³")
+                with col_et:
+                    st.metric(label="Enhancing Tumor Volume", value=f"{et_vol:.2f} cm³")
+                with col_total:
+                    st.metric(label="Total Tumor Volume", value=f"{total_vol:.2f} cm³")
+
+            # Download thresholded uncertainty maps if desired...
+            if show_unc and selected_uncertainties and threshold is not None:
+                st.markdown("### Download Thresholded Uncertainty Maps")
+                for label, unc_data in selected_uncertainties:
+                    if label == "NCR":
+                        unc_path = ncr_path
+                    elif label == "ED":
+                        unc_path = ed_path
+                    elif label == "ET":
+                        unc_path = et_path
+                    else:
+                        unc_path = None
+
+                    if unc_path is not None:
+                        unc_nii = nib.load(unc_path)
+                        below_data = np.where(unc_data <= threshold, unc_data, 0.0)
+                        above_data = np.where(unc_data > threshold, unc_data, 0.0)
+
+                        nii_below = nib.Nifti1Image(below_data, affine=unc_nii.affine, header=unc_nii.header)
+                        nii_above = nib.Nifti1Image(above_data, affine=unc_nii.affine, header=unc_nii.header)
+
+                        bytes_below = nifti_to_bytes(nii_below)
+                        bytes_above = nifti_to_bytes(nii_above)
+
+                        st.download_button(
+                            label=f"Download {label} Map (Below Threshold)",
+                            data=bytes_below,
+                            file_name=f"{label}_uncertainty_below_{threshold}_threshold.nii.gz",
+                            mime="application/octet-stream"
+                        )
+                        st.download_button(
+                            label=f"Download {label} Map (Above Threshold)",
+                            data=bytes_above,
+                            file_name=f"{label}_uncertainty_above_{threshold}_threshold.nii.gz",
+                            mime="application/octet-stream"
+                        )
+
+            # Optional: Download segmentation figure
+            if show_seg and seg_figure is not None:
+                img_bytes = seg_figure.to_image(format="png")
+                st.download_button(
+                    label="Download Segmentation Figure",
+                    data=img_bytes,
+                    file_name="segmentation_figure.png",
+                    mime="image/png"
+                )
