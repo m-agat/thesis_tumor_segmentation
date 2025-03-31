@@ -129,7 +129,6 @@ def convert_dicom_to_nifti(dicom_files, output_filename="converted.nii"):
         st.error(f"Error converting DICOM to NIfTI: {e}")
         return None
 
-
 def check_file_format(file):
     """
     Checks if a file is DICOM or NIfTI based on its name and/or a lightweight DICOM read.
@@ -157,34 +156,6 @@ def check_file_format(file):
     except Exception as e:
         st.error(f"Error checking format of {file.name}: {e}")
     return None
-
-def show_simple(image_3d, slice_idx, title=""):
-    """
-    Displays a single slice from a 3D volume using Matplotlib.
-    image_3d should have shape [D, H, W].
-
-    Parameters:
-    -----------
-    image_3d : np.ndarray
-        3D array representing the volume.
-    slice_idx : int
-        Index of the slice to show in the D dimension.
-    title : str
-        Title for the plot.
-
-    Returns:
-    --------
-    matplotlib.figure.Figure
-        The Matplotlib figure for display.
-    """
-    slice_2d = image_3d[:, :, slice_idx]
-    fig, ax = plt.subplots(figsize=(5, 5))  
-    im = ax.imshow(slice_2d, cmap="gray", interpolation="none")
-    ax.set_title(title)
-    ax.axis("off")
-    ax.set_aspect("equal")  
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    return fig
 
 def load_nifti(file_path):
     """
@@ -330,137 +301,6 @@ def find_available_outputs(output_dir="./output_segmentations"):
 
     return outputs
 
-def interactive_segmentation_figure(brain_slice, seg_slice):
-    fig = go.Figure()
-    # Background brain image
-    fig.add_trace(go.Heatmap(
-        z=brain_slice,
-        colorscale='gray',
-        showscale=False,
-        hoverinfo='skip'
-    ))
-    
-    # Segmentation overlay
-    hover_text = np.where(seg_slice > 0, np.char.add("Tumor tissue: ", seg_slice.astype(str)), "No Tumor")
-    fig.add_trace(go.Heatmap(
-        z=seg_slice,
-        colorscale=[[0, 'rgba(0,0,0,0)'], [0.33, 'red'], [0.66, 'green'], [1.0, 'blue']],
-        opacity=0.5,
-        text=hover_text,
-        hoverinfo='text',
-        showscale=False
-    ))
-
-    # Match the width you use in st.image(..., width=800)
-    # You can also set the height to match the aspect ratio of your slice if needed.
-    fig.update_layout(
-        width=800,
-        height=800,  # or compute a height that keeps the same aspect ratio as your slice
-        margin=dict(l=0, r=0, t=0, b=0)
-    )
-
-    fig.update_xaxes(
-        showgrid=False,      # No background grid
-        zeroline=False,      # No x=0 line
-        visible=False        # Hide axis ticks and labels
-    )
-    fig.update_yaxes(
-        showgrid=False,
-        zeroline=False,
-        visible=False
-    )
-
-    fig.update_yaxes(autorange='reversed')
-
-    return fig
-
-def interactive_single_tissue_figure(brain_slice, seg_slice, tissue, seg_color, alpha=0.3):
-    """
-    Creates a Plotly figure overlay for a single tissue segmentation.
-    The overlay shows only the specified tissue (label) in the chosen color.
-    """
-    fig = go.Figure()
-    # Background brain image
-    fig.add_trace(go.Heatmap(
-        z=brain_slice,
-        colorscale='gray',
-        showscale=False,
-        hoverinfo='skip'
-    ))
-    # Create a binary mask for the tissue
-    mask = (seg_slice == tissue).astype(float)
-    hover_text = np.where(mask==1, "Tumor tissue", "No Tumor")
-    
-    # Convert RGB tuple to an rgba string (full opacity in the color definition)
-    r, g, b = seg_color
-    color_str = f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)'
-    
-    fig.add_trace(go.Heatmap(
-        z=mask,
-        colorscale=[[0, 'rgba(0,0,0,0)'], [1, color_str]],
-        opacity=alpha,
-        text=hover_text,
-        hoverinfo='text',
-        showscale=False
-    ))
-    fig.update_layout(
-        width=800,
-        height=800,
-        margin=dict(l=0, r=0, t=0, b=0)
-    )
-    fig.update_xaxes(
-        showgrid=False,
-        zeroline=False,
-        visible=False
-    )
-    fig.update_yaxes(
-        showgrid=False,
-        zeroline=False,
-        visible=False,
-        autorange='reversed'
-    )
-    return fig
-
-def interactive_uncertainty_figure(brain_slice, unc_slice, alpha=0.5):
-    """
-    Creates a Plotly figure for uncertainty overlay.
-    The background is the brain slice, and the uncertainty map is overlaid
-    using the 'Jet' colorscale. Hovering over the uncertainty map shows its value.
-    """
-    fig = go.Figure()
-    # Background brain image
-    fig.add_trace(go.Heatmap(
-        z=brain_slice,
-        colorscale='gray',
-        showscale=False,
-        hoverinfo='skip'
-    ))
-    # Uncertainty overlay with hover text showing uncertainty value
-    fig.add_trace(go.Heatmap(
-        z=unc_slice,
-        colorscale='Jet',
-        opacity=alpha,
-        hovertemplate='Uncertainty: %{z:.3f}<extra></extra>',
-        showscale=False
-    ))
-    fig.update_layout(
-        width=800,
-        height=800,
-        margin=dict(l=0, r=0, t=0, b=0)
-    )
-    fig.update_xaxes(
-        showgrid=False,
-        zeroline=False,
-        visible=False
-    )
-    fig.update_yaxes(
-        showgrid=False,
-        zeroline=False,
-        visible=False,
-        autorange='reversed'
-    )
-    return fig
-
 # --------------------------------------------------------------------------------
 # Additional functions for tumor counting or slice range
 # --------------------------------------------------------------------------------
@@ -557,33 +397,6 @@ def count_tumors_with_volume(mask_3d, voxel_vol_mm3, min_voxel_size=6, min_dista
 
     return len(separated_tumors), volumes_cm3
 
-def calculate_valid_slices(masks):
-    """
-    Finds the global minimum and maximum slice indices that contain any non-zero
-    data among a list of 3D volumes. It was used previously for a global slider,
-    but we no longer use a single global slider per design.
-    Kept here if needed for some other feature.
-
-    Parameters:
-    -----------
-    masks : list of np.ndarray
-        Each is a 3D volume. Typically binary or integer masks.
-
-    Returns:
-    --------
-    (int, int)
-        The minimum and maximum slice indices that contain non-zero data across
-        all volumes. If none are non-zero, returns (0,0).
-    """
-    valid_slices = set()
-    for mask in masks:
-        if mask is not None:
-            non_empty_slices = set((mask != 0).any(axis=(1, 2)).nonzero()[0])
-            valid_slices.update(non_empty_slices)
-    if valid_slices:
-        return min(valid_slices), max(valid_slices)
-    return 0, 0
-
 
 def create_thresholded_nifti(unc_data, threshold, original_nii):
     """
@@ -614,6 +427,7 @@ def nifti_to_bytes(nii_img):
     finally:
         os.remove(tmp_path)
     return data
+
 # --------------------------------------------------------------------------------
 # SimpleITK-based registration and intensity rescaling (optional)
 # --------------------------------------------------------------------------------
@@ -717,38 +531,38 @@ def realign_images_to_reference(nifti_paths, progress_callback=None):
 # --------------------------------------------------------------------------------
 # Create Streamlit tabs
 # --------------------------------------------------------------------------------
-hide_streamlit_style = """
-                <style>
-                div[data-testid="stToolbar"] {
-                visibility: hidden;
-                height: 0%;
-                position: fixed;
-                }
-                div[data-testid="stDecoration"] {
-                visibility: hidden;
-                height: 0%;
-                position: fixed;
-                }
-                div[data-testid="stStatusWidget"] {
-                visibility: hidden;
-                height: 0%;
-                position: fixed;
-                }
-                #MainMenu {
-                visibility: hidden;
-                height: 0%;
-                }
-                header {
-                visibility: hidden;
-                height: 0%;
-                }
-                footer {
-                visibility: hidden;
-                height: 0%;
-                }
-                </style>
-                """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# hide_streamlit_style = """
+#                 <style>
+#                 div[data-testid="stToolbar"] {
+#                 visibility: hidden;
+#                 height: 0%;
+#                 position: fixed;
+#                 }
+#                 div[data-testid="stDecoration"] {
+#                 visibility: hidden;
+#                 height: 0%;
+#                 position: fixed;
+#                 }
+#                 div[data-testid="stStatusWidget"] {
+#                 visibility: hidden;
+#                 height: 0%;
+#                 position: fixed;
+#                 }
+#                 #MainMenu {
+#                 visibility: hidden;
+#                 height: 0%;
+#                 }
+#                 header {
+#                 visibility: hidden;
+#                 height: 0%;
+#                 }
+#                 footer {
+#                 visibility: hidden;
+#                 height: 0%;
+#                 }
+#                 </style>
+#                 """
+# st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.title("🧠 Brain Tumor Segmentation")
 
 tab1, results = st.tabs(["Data Upload & Preview", "Results"])
@@ -763,7 +577,7 @@ with tab1:
     st.markdown("""
     **What does this app do?**  
     - This application lets you upload up to 4 brain MRI files in NIfTI or DICOM format.
-    - You can optionally preprocess these files (intensity normalization and registration).
+    - You can optionally preprocess these files (skull stripping, reslicing, and registration).
     - Then you can run an ensemble model to segment possible tumor regions.
 
     **How to use it:**  
@@ -773,16 +587,83 @@ with tab1:
     4. Switch to the **Results** tab to visualize the output.
 
     **Supported Modalities (BraTS style):** Flair, T1ce, T1, T2.  
-    If fewer than 4 files are provided, the app duplicates some files to ensure it can still run.
     """)  
 
     st.sidebar.header("File Upload")
+    use_example = st.sidebar.checkbox("Use Example Case", value=False, 
+                                    help="Use pre-packaged sample images (in the sample_data folder)")
 
-    uploaded_files = st.sidebar.file_uploader(
-        "Upload up to 4 files (NIfTI or DICOM):",
-        type=["nii", "nii.gz", "dcm"],
-        accept_multiple_files=True,
-    )
+    if use_example:
+        sample_dir = os.path.join(os.getcwd(), "sample_data")
+        example_files = sorted(glob.glob(os.path.join(sample_dir, "*.nii*")))
+        if example_files:
+            st.info("Using example case from sample_data folder.")
+            actual_nifti_paths = reorder_modalities(example_files)
+        else:
+            st.error("No example data found in 'sample_data' folder. Please upload your files.")
+            actual_nifti_paths = []
+    else:
+        uploaded_files = st.sidebar.file_uploader(
+            "Upload up to 4 files (NIfTI or DICOM):",
+            type=["nii", "nii.gz", "dcm"],
+            accept_multiple_files=True,
+        )
+        if not uploaded_files:
+            st.warning("Please upload your MRI files or select the Example Case option.")
+            actual_nifti_paths = []
+        else:
+            # Process uploaded files only when not using example case.
+            uploaded_filenames = [f.name for f in uploaded_files]
+            if uploaded_filenames != st.session_state.get("last_uploaded_files", []):
+                st.session_state["preproc_paths"] = None
+                st.session_state["last_uploaded_files"] = uploaded_filenames
+
+            # Deduplicate and convert uploaded files
+            unique_file_names = set()
+            unique_files = []
+            for f in uploaded_files:
+                if f.name not in unique_file_names:
+                    unique_file_names.add(f.name)
+                    unique_files.append(f)
+
+            st.write("### File Status")
+            nifti_files = []
+            for file in unique_files:
+                file.seek(0)
+                file_format = check_file_format(file)
+                if file_format == "nifti":
+                    st.success(f"NIfTI file: {file.name}")
+                    nifti_files.append(file)
+                elif file_format == "dicom":
+                    st.warning(f"DICOM file detected: {file.name}. Converting to NIfTI...")
+                    file.seek(0)
+                    converted_path = convert_dicom_to_nifti([file], f"converted_{file.name}.nii")
+                    if converted_path:
+                        st.info(f"Converted to NIfTI: {converted_path}")
+                        nifti_files.append(converted_path)
+                else:
+                    st.error(f"Unrecognized format: {file.name}")
+
+            if len(nifti_files) < 4:
+                st.warning("Fewer than 4 files detected. Duplicating some files to proceed.")
+                while len(nifti_files) < 4 and len(nifti_files) > 0:
+                    nifti_files.append(nifti_files[-1])
+            elif len(nifti_files) > 4:
+                st.warning("More than 4 files uploaded. Only the first 4 will be used.")
+                nifti_files = nifti_files[:4]
+
+            actual_nifti_paths = []
+            for item in nifti_files:
+                if isinstance(item, str):
+                    actual_nifti_paths.append(item)
+                else:
+                    item.seek(0)
+                    tmp_path = os.path.join(os.getcwd(), item.name)
+                    with open(tmp_path, "wb") as out:
+                        out.write(item.read())
+                    actual_nifti_paths.append(tmp_path)
+
+            actual_nifti_paths = reorder_modalities(actual_nifti_paths)
 
     preproc_clicked = st.sidebar.button("Preprocess", key="btn_preprocesar_sidebar")
     run_seg_clicked = st.sidebar.button("Run Tumor Segmentation", key="btn_run_segmentation")
@@ -803,59 +684,6 @@ with tab1:
         st.session_state["preproc_paths"] = None
     if "last_uploaded_files" not in st.session_state:
         st.session_state["last_uploaded_files"] = []
-
-    if uploaded_files:
-        uploaded_filenames = [f.name for f in uploaded_files]
-        if uploaded_filenames != st.session_state["last_uploaded_files"]:
-            st.session_state["preproc_paths"] = None
-            st.session_state["last_uploaded_files"] = uploaded_filenames
-
-        # --- 🧠 Dedupe and convert ---
-        unique_file_names = set()
-        unique_files = []
-        for f in uploaded_files:
-            if f.name not in unique_file_names:
-                unique_file_names.add(f.name)
-                unique_files.append(f)
-
-        st.write("### File Status")
-        nifti_files = []
-        for file in unique_files:
-            file.seek(0)
-            file_format = check_file_format(file)
-            if file_format == "nifti":
-                st.success(f"NIfTI file: {file.name}")
-                nifti_files.append(file)
-            elif file_format == "dicom":
-                st.warning(f"DICOM file detected: {file.name}. Converting to NIfTI...")
-                file.seek(0)
-                converted_path = convert_dicom_to_nifti([file], f"converted_{file.name}.nii")
-                if converted_path:
-                    st.info(f"Converted to NIfTI: {converted_path}")
-                    nifti_files.append(converted_path)
-            else:
-                st.error(f"Unrecognized format: {file.name}")
-
-        if len(nifti_files) < 4:
-            st.warning("Fewer than 4 files detected. Duplicating some files to proceed.")
-            while len(nifti_files) < 4 and len(nifti_files) > 0:
-                nifti_files.append(nifti_files[-1])
-        elif len(nifti_files) > 4:
-            st.warning("More than 4 files uploaded. Only the first 4 will be used.")
-            nifti_files = nifti_files[:4]
-
-        actual_nifti_paths = []
-        for item in nifti_files:
-            if isinstance(item, str):
-                actual_nifti_paths.append(item)
-            else:
-                item.seek(0)
-                tmp_path = os.path.join(os.getcwd(), item.name)
-                with open(tmp_path, "wb") as out:
-                    out.write(item.read())
-                actual_nifti_paths.append(tmp_path)
-
-        actual_nifti_paths = reorder_modalities(actual_nifti_paths)
 
         # --- Run preprocessing ---
         if preproc_clicked and len(actual_nifti_paths) > 0:
@@ -1420,7 +1248,7 @@ with results:
             # Display other figures (Probability, Uncertainty) in a separate row
             cols_extra = []
             if show_prob and prob_figure: 
-                cols_extra.append(("Probabilitiy map", prob_figure))
+                cols_extra.append(("Probability map", prob_figure))
             if show_unc and unc_figure: 
                 cols_extra.append(("Uncertainty map", unc_figure))
             if cols_extra:
