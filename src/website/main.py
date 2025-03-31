@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import subprocess
 import re 
 import tempfile 
+import requests
 
 # Ensemble model
 import os
@@ -19,7 +20,7 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
-    
+
 import final_ensemble_model as fem
 from dataset.transforms import get_test_transforms
 import config.config as config 
@@ -535,6 +536,30 @@ def realign_images_to_reference(nifti_paths, progress_callback=None):
 
     return output_paths
 
+@st.cache_data(show_spinner=False)
+def download_example_files(urls, dest_dir):
+    if not os.path.exists(dest_dir):
+        os.makedirs(dest_dir)
+    
+    downloaded_files = []
+    for url in urls:
+        filename = os.path.basename(url.split('?')[0])
+        dest_path = os.path.join(dest_dir, filename)
+        if not os.path.exists(dest_path):
+            r = requests.get(url, stream=True)
+            r.raise_for_status()
+            with open(dest_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        downloaded_files.append(dest_path)
+    return downloaded_files
+
+example_case_files = [
+    "https://www.dropbox.com/scl/fi/mpiqpsrls651nq720pklk/BraTS2021_00657_flair.nii.gz?rlkey=19fzpk4hzpqxgzttx7mdrnrda&st=xbv3c82e&dl=1", # flair
+    "https://www.dropbox.com/scl/fi/9ugm92maj6yiwcf2pkxdg/BraTS2021_00657_t1.nii.gz?rlkey=n4wvtuhnjmvf5fzjnlc2cp0an&st=me7no16r&dl=1", #t1
+    "https://www.dropbox.com/scl/fi/wdjjltf83r5ojfgtgtudz/BraTS2021_00657_t1ce.nii.gz?rlkey=hrsk7534yyn3huhimuney0r6b&st=h6c0i70y&dl=1", #t1ce
+    "https://www.dropbox.com/scl/fi/i42lxu1set9rz0fp8kma2/BraTS2021_00657_t2.nii.gz?rlkey=nxhixo9czr8ecvmwcjscul8qh&st=13g0olsz&dl=1" #t2
+]
 # --------------------------------------------------------------------------------
 # Create Streamlit tabs
 # --------------------------------------------------------------------------------
@@ -600,15 +625,10 @@ with tab1:
                                     help="Use pre-packaged sample images (in the sample_data folder)")
 
     if use_example:
-        sample_dir = os.path.join(os.getcwd(), "sample_data")
-        example_files = sorted(glob.glob(os.path.join(sample_dir, "*.nii*")))
-        if example_files:
-            st.info("Using example case from sample_data folder.")
-            actual_nifti_paths = reorder_modalities(example_files)
-            st.write("Actual NIfTI Paths:", actual_nifti_paths)
-        else:
-            st.error("No example data found in 'sample_data' folder. Please upload your files.")
-            actual_nifti_paths = []
+        example_dest = os.path.join(os.getcwd(), "downloaded_example_data")
+        actual_nifti_paths = download_example_files(example_case_files, example_dest)
+        st.info("Using example case.")
+        actual_nifti_paths = reorder_modalities(actual_nifti_paths)
     else:
         uploaded_files = st.sidebar.file_uploader(
             "Upload up to 4 files (NIfTI or DICOM):",
@@ -691,83 +711,81 @@ with tab1:
     if "last_uploaded_files" not in st.session_state:
         st.session_state["last_uploaded_files"] = []
 
-        # --- Run preprocessing ---
-        if preproc_clicked and len(actual_nifti_paths) > 0:
-            st.info("Starting preprocessing (skull stripping + registration)...")
-            preproc_bar = st.progress(0, text="Preprocessing...")
+    # --- Run preprocessing ---
+    if preproc_clicked and len(actual_nifti_paths) > 0:
+        st.info("Starting preprocessing (skull stripping + registration)...")
+        preproc_bar = st.progress(0, text="Preprocessing...")
 
-            def update_progress(pct):
-                preproc_bar.progress(int(pct * 100), text=f"Preprocessing... {int(pct * 100)}%")
+        def update_progress(pct):
+            preproc_bar.progress(int(pct * 100), text=f"Preprocessing... {int(pct * 100)}%")
 
-            result = realign_images_to_reference(actual_nifti_paths, progress_callback=update_progress)
-            st.session_state["preproc_paths"] = result
-            preproc_bar.progress(100, text="✅ Preprocessing complete!")
-            st.success("Preprocessing completed.")
+        result = realign_images_to_reference(actual_nifti_paths, progress_callback=update_progress)
+        st.session_state["preproc_paths"] = result
+        preproc_bar.progress(100, text="✅ Preprocessing complete!")
+        st.success("Preprocessing completed.")
 
-        preproc_paths = st.session_state.get("preproc_paths")
-        if preproc_paths is None:
-            # Use the raw uploaded NIfTI paths
-            preproc_paths = actual_nifti_paths
+    preproc_paths = st.session_state.get("preproc_paths")
+    if preproc_paths is None:
+        # Use the raw uploaded NIfTI paths
+        preproc_paths = actual_nifti_paths
 
-        # --- Run segmentation ---
-        st.markdown("---")
-        if run_seg_clicked:
-            st.subheader("Running Segmentation")
-            if not preproc_paths or not os.path.exists(preproc_paths[0]):
-                st.error("Preprocessed (or raw) file not found.")
-            else:
-                st.info("Loading the model...")
-                models_dict = load_ensemble_models()
-                st.info("Loading data...")
-                test_loader = create_test_loader(preproc_paths)
-                patient_id = fem.extract_patient_id(preproc_paths[0]) or None
-                progress_bar = st.progress(0, text="Running segmentation...")
-                fem.ensemble_segmentation(
-                    test_loader, 
-                    models_dict, 
-                    composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, 
-                    n_iterations=10, 
-                    progress_bar=progress_bar  
-                )
-                st.success("Segmentation complete! Check the 'Results' tab for output.")
+    # --- Run segmentation ---
+    st.markdown("---")
+    if run_seg_clicked:
+        st.subheader("Running Segmentation")
+        if not preproc_paths or not os.path.exists(preproc_paths[0]):
+            st.error("Preprocessed (or raw) file not found.")
+        else:
+            st.info("Loading the model...")
+            models_dict = load_ensemble_models()
+            st.info("Loading data...")
+            test_loader = create_test_loader(preproc_paths)
+            patient_id = fem.extract_patient_id(preproc_paths[0]) or None
+            progress_bar = st.progress(0, text="Running segmentation...")
+            fem.ensemble_segmentation(
+                test_loader, 
+                models_dict, 
+                composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, 
+                n_iterations=10, 
+                progress_bar=progress_bar  
+            )
+            st.success("Segmentation complete! Check the 'Results' tab for output.")
 
-        # --- Image previews ---
-        st.write("## Preview of Uploaded Files")
+    # --- Image previews ---
+    st.write("## Preview of Uploaded Files")
 
+    if actual_nifti_paths:
         st.subheader("🧠 Original Scans")
+        example_img = nib.load(actual_nifti_paths[0])
+        max_slices_orig = example_img.shape[-1]
+        slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
+        cols = st.columns(len(actual_nifti_paths))
+        for i, path in enumerate(actual_nifti_paths):
+            with cols[i]:
+                slice_img = load_slice_lazy(path, slice_idx_orig)
+                st.write(f"**{os.path.basename(path)}**")
+                fig, ax = plt.subplots(figsize=(5, 5))
+                ax.imshow(slice_img, cmap="gray")
+                ax.axis("off")
+                st.pyplot(fig)
+    else:
+        st.warning("No data available to preview.")
 
-        if actual_nifti_paths:
-            st.subheader("🧠 Original Scans")
-            example_img = nib.load(actual_nifti_paths[0])
-            max_slices_orig = example_img.shape[-1]
-            slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
-            cols = st.columns(len(actual_nifti_paths))
-            for i, path in enumerate(actual_nifti_paths):
+    if preproc_clicked and preproc_paths and all(os.path.exists(p) for p in preproc_paths):
+        if (preproc_paths and preproc_paths != actual_nifti_paths and all(os.path.exists(p) for p in preproc_paths)):
+            st.subheader("🧼 Preprocessed Scans")
+            example_img_pre = nib.load(preproc_paths[0])
+            max_slices_pre = example_img_pre.shape[-1]
+            slice_idx_pre = st.slider("Slice Index (Preprocessed)", 0, max_slices_pre - 1, max_slices_pre // 2, key="preproc_slider")
+            cols = st.columns(len(preproc_paths))
+            for i, path in enumerate(preproc_paths):
                 with cols[i]:
-                    slice_img = load_slice_lazy(path, slice_idx_orig)
+                    slice_img = load_slice_lazy(path, slice_idx_pre)
                     st.write(f"**{os.path.basename(path)}**")
                     fig, ax = plt.subplots(figsize=(5, 5))
                     ax.imshow(slice_img, cmap="gray")
                     ax.axis("off")
                     st.pyplot(fig)
-        else:
-            st.warning("No data available to preview.")
-
-        if preproc_clicked and preproc_paths and all(os.path.exists(p) for p in preproc_paths):
-            if (preproc_paths and preproc_paths != actual_nifti_paths and all(os.path.exists(p) for p in preproc_paths)):
-                st.subheader("🧼 Preprocessed Scans")
-                example_img_pre = nib.load(preproc_paths[0])
-                max_slices_pre = example_img_pre.shape[-1]
-                slice_idx_pre = st.slider("Slice Index (Preprocessed)", 0, max_slices_pre - 1, max_slices_pre // 2, key="preproc_slider")
-                cols = st.columns(len(preproc_paths))
-                for i, path in enumerate(preproc_paths):
-                    with cols[i]:
-                        slice_img = load_slice_lazy(path, slice_idx_pre)
-                        st.write(f"**{os.path.basename(path)}**")
-                        fig, ax = plt.subplots(figsize=(5, 5))
-                        ax.imshow(slice_img, cmap="gray")
-                        ax.axis("off")
-                        st.pyplot(fig)
 
 # --------------------------------------------------------------------------------
 # TAB 2: RESULTS
