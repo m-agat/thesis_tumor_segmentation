@@ -1155,8 +1155,6 @@ with results:
                             composite_text = np.full(gt_slice.shape, "", dtype='<U50')
                             for label_val, color in selected_gt_tissues:
                                 mask = (gt_slice == label_val)
-                                # For debugging: show how many pixels are selected for each tissue.
-                                st.write(f"GT Tissue {label_names.get(label_val, label_val)}: {np.sum(mask)} voxels")
                                 if np.any(mask):
                                     z_data = mask.astype(float)
                                     r, g, b = color
