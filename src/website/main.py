@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 import subprocess
 import re 
 import tempfile 
+import requests
 
 # Ensemble model
 import os
@@ -19,7 +20,7 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
-    
+
 import final_ensemble_model as fem
 from dataset.transforms import get_test_transforms
 import config.config as config 
@@ -253,6 +254,7 @@ def find_available_outputs(output_dir="./output_segmentations"):
     et_files  = glob.glob(os.path.join(output_dir, "uncertainty_ET_*.nii.gz"))
     glob_files  = glob.glob(os.path.join(output_dir, "uncertainty_global_*.nii.gz"))
     softmax_files = glob.glob(os.path.join(output_dir, "hybrid_softmax_*.nii.gz"))
+    gt_files = glob.glob(os.path.join(output_dir, "*seg*.nii.gz"))
    
     outputs = {}
 
@@ -305,6 +307,9 @@ def find_available_outputs(output_dir="./output_segmentations"):
     for f in softmax_files:
         pid = extract_id(f)
         outputs.setdefault(pid, {})["softmax"] = f
+    for f in gt_files:
+        pid = extract_id(f)
+        outputs.setdefault(pid, {})["gt"] = f
 
     return outputs
 
@@ -465,9 +470,10 @@ def skull_strip_with_hd_bet(input_path, output_path=None):
 
     return output_path
 
-def realign_images_to_reference(nifti_paths, progress_callback=None):
+def realign_images_to_reference(nifti_paths, output_dir, progress_callback=None):
     """
     Skull-strips and realigns all images in 'nifti_paths' to the first one (as reference).
+    The preprocessed images are saved into the specified output_dir.
     Optionally updates a Streamlit progress bar.
     """
     if not nifti_paths:
@@ -478,7 +484,10 @@ def realign_images_to_reference(nifti_paths, progress_callback=None):
     current_step = 0
 
     for p in nifti_paths:
-        stripped = skull_strip_with_hd_bet(p)
+        # Create output path in output_dir
+        base_name = os.path.basename(p).replace(".nii", "").replace(".gz", "")
+        stripped_output = os.path.join(output_dir, f"{base_name}_skullstripped.nii.gz")
+        stripped = skull_strip_with_hd_bet(p, output_path=stripped_output)
         stripped_paths.append(stripped)
         current_step += 1
         if progress_callback:
@@ -489,7 +498,7 @@ def realign_images_to_reference(nifti_paths, progress_callback=None):
     ref_img_sitk = rescale_intensity_sitk(ref_img_sitk)
 
     output_paths = []
-    ref_output_path = os.path.join(os.getcwd(), f"preproc_{os.path.basename(reference_path)}")
+    ref_output_path = os.path.join(output_dir, f"preproc_{os.path.basename(reference_path)}")
     sitk.WriteImage(ref_img_sitk, ref_output_path)
     output_paths.append(ref_output_path)
 
@@ -525,7 +534,7 @@ def realign_images_to_reference(nifti_paths, progress_callback=None):
             mov_img_sitk.GetPixelID(),
         )
 
-        out_path = os.path.join(os.getcwd(), f"preproc_{os.path.basename(path)}")
+        out_path = os.path.join(output_dir, f"preproc_{os.path.basename(path)}")
         sitk.WriteImage(aligned_img, out_path)
         output_paths.append(out_path)
 
@@ -535,6 +544,30 @@ def realign_images_to_reference(nifti_paths, progress_callback=None):
 
     return output_paths
 
+@st.cache_data(show_spinner=False)
+def download_example_files(urls, dest_dir):
+    if not os.path.exists(dest_dir):
+        os.makedirs(dest_dir)
+    
+    downloaded_files = []
+    for url in urls:
+        filename = os.path.basename(url.split('?')[0])
+        dest_path = os.path.join(dest_dir, filename)
+        if not os.path.exists(dest_path):
+            r = requests.get(url, stream=True)
+            r.raise_for_status()
+            with open(dest_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        downloaded_files.append(dest_path)
+    return downloaded_files
+
+example_case_files = [
+    "https://www.dropbox.com/scl/fi/mpiqpsrls651nq720pklk/BraTS2021_00657_flair.nii.gz?rlkey=19fzpk4hzpqxgzttx7mdrnrda&st=xbv3c82e&dl=1", # flair
+    "https://www.dropbox.com/scl/fi/9ugm92maj6yiwcf2pkxdg/BraTS2021_00657_t1.nii.gz?rlkey=n4wvtuhnjmvf5fzjnlc2cp0an&st=me7no16r&dl=1", #t1
+    "https://www.dropbox.com/scl/fi/wdjjltf83r5ojfgtgtudz/BraTS2021_00657_t1ce.nii.gz?rlkey=hrsk7534yyn3huhimuney0r6b&st=h6c0i70y&dl=1", #t1ce
+    "https://www.dropbox.com/scl/fi/i42lxu1set9rz0fp8kma2/BraTS2021_00657_t2.nii.gz?rlkey=nxhixo9czr8ecvmwcjscul8qh&st=13g0olsz&dl=1" #t2
+]
 # --------------------------------------------------------------------------------
 # Create Streamlit tabs
 # --------------------------------------------------------------------------------
@@ -600,15 +633,10 @@ with tab1:
                                     help="Use pre-packaged sample images (in the sample_data folder)")
 
     if use_example:
-        sample_dir = os.path.join(os.getcwd(), "sample_data")
-        example_files = sorted(glob.glob(os.path.join(sample_dir, "*.nii*")))
-        if example_files:
-            st.info("Using example case from sample_data folder.")
-            actual_nifti_paths = reorder_modalities(example_files)
-            st.write("Actual NIfTI Paths:", actual_nifti_paths)
-        else:
-            st.error("No example data found in 'sample_data' folder. Please upload your files.")
-            actual_nifti_paths = []
+        example_dest = os.path.join(os.getcwd(), "downloaded_example_data")
+        actual_nifti_paths = download_example_files(example_case_files, example_dest)
+        st.info("Using example case.")
+        actual_nifti_paths = reorder_modalities(actual_nifti_paths)
     else:
         uploaded_files = st.sidebar.file_uploader(
             "Upload up to 4 files (NIfTI or DICOM):",
@@ -691,106 +719,166 @@ with tab1:
     if "last_uploaded_files" not in st.session_state:
         st.session_state["last_uploaded_files"] = []
 
-        # --- Run preprocessing ---
-        if preproc_clicked and len(actual_nifti_paths) > 0:
-            st.info("Starting preprocessing (skull stripping + registration)...")
-            preproc_bar = st.progress(0, text="Preprocessing...")
+    # --- PREPROCESSING --- 
+    if preproc_clicked and actual_nifti_paths:
+        st.info("Starting preprocessing...")
+        preproc_bar = st.progress(0, text="Preprocessing...")
+        # Create a persistent temporary directory for preprocessed images
+        preproc_temp_dir = tempfile.mkdtemp()
+        st.session_state["preproc_temp_dir"] = preproc_temp_dir  # store it for later use
 
-            def update_progress(pct):
-                preproc_bar.progress(int(pct * 100), text=f"Preprocessing... {int(pct * 100)}%")
+        def update_progress(pct):
+            preproc_bar.progress(int(pct * 100), text=f"Preprocessing... {int(pct * 100)}%")
 
-            result = realign_images_to_reference(actual_nifti_paths, progress_callback=update_progress)
-            st.session_state["preproc_paths"] = result
-            preproc_bar.progress(100, text="✅ Preprocessing complete!")
-            st.success("Preprocessing completed.")
+        result = realign_images_to_reference(actual_nifti_paths, output_dir=preproc_temp_dir, progress_callback=update_progress)
+        st.session_state["preproc_paths"] = result
+        preproc_bar.progress(100, text="✅ Preprocessing complete!")
+        st.success("Preprocessing completed.")
+    
+    # Use preprocessed paths if available; otherwise, use the original files.
+    preproc_paths = st.session_state.get("preproc_paths") or actual_nifti_paths
 
-        preproc_paths = st.session_state.get("preproc_paths")
-        if preproc_paths is None:
-            # Use the raw uploaded NIfTI paths
-            preproc_paths = actual_nifti_paths
-
-        # --- Run segmentation ---
-        st.markdown("---")
-        if run_seg_clicked:
-            st.subheader("Running Segmentation")
-            if not preproc_paths or not os.path.exists(preproc_paths[0]):
-                st.error("Preprocessed (or raw) file not found.")
-            else:
-                st.info("Loading the model...")
-                models_dict = load_ensemble_models()
-                st.info("Loading data...")
-                test_loader = create_test_loader(preproc_paths)
-                patient_id = fem.extract_patient_id(preproc_paths[0]) or None
-                progress_bar = st.progress(0, text="Running segmentation...")
-                fem.ensemble_segmentation(
-                    test_loader, 
-                    models_dict, 
-                    composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, 
-                    n_iterations=10, 
-                    progress_bar=progress_bar  
-                )
-                st.success("Segmentation complete! Check the 'Results' tab for output.")
-
-        # --- Image previews ---
-        st.write("## Preview of Uploaded Files")
-
-        st.subheader("🧠 Original Scans")
-
-        if actual_nifti_paths:
-            st.subheader("🧠 Original Scans")
-            example_img = nib.load(actual_nifti_paths[0])
-            max_slices_orig = example_img.shape[-1]
-            slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
-            cols = st.columns(len(actual_nifti_paths))
-            for i, path in enumerate(actual_nifti_paths):
-                with cols[i]:
-                    slice_img = load_slice_lazy(path, slice_idx_orig)
-                    st.write(f"**{os.path.basename(path)}**")
-                    fig, ax = plt.subplots(figsize=(5, 5))
-                    ax.imshow(slice_img, cmap="gray")
-                    ax.axis("off")
-                    st.pyplot(fig)
+    # --- RUN SEGMENTATION ---
+    if run_seg_clicked:
+        st.subheader("Running Segmentation")
+        if not preproc_paths or not os.path.exists(preproc_paths[0]):
+            st.error("Preprocessed (or raw) file not found.")
         else:
-            st.warning("No data available to preview.")
+            st.info("Loading the model...")
+            models_dict = load_ensemble_models()
+            st.info("Loading data...")
+            test_loader = create_test_loader(preproc_paths)
+            patient_id = fem.extract_patient_id(preproc_paths[0]) or None
 
-        if preproc_clicked and preproc_paths and all(os.path.exists(p) for p in preproc_paths):
-            if (preproc_paths and preproc_paths != actual_nifti_paths and all(os.path.exists(p) for p in preproc_paths)):
-                st.subheader("🧼 Preprocessed Scans")
-                example_img_pre = nib.load(preproc_paths[0])
-                max_slices_pre = example_img_pre.shape[-1]
-                slice_idx_pre = st.slider("Slice Index (Preprocessed)", 0, max_slices_pre - 1, max_slices_pre // 2, key="preproc_slider")
-                cols = st.columns(len(preproc_paths))
-                for i, path in enumerate(preproc_paths):
-                    with cols[i]:
-                        slice_img = load_slice_lazy(path, slice_idx_pre)
-                        st.write(f"**{os.path.basename(path)}**")
-                        fig, ax = plt.subplots(figsize=(5, 5))
-                        ax.imshow(slice_img, cmap="gray")
-                        ax.axis("off")
-                        st.pyplot(fig)
+            # Create a persistent temporary directory for segmentation outputs
+            seg_temp_dir = tempfile.mkdtemp()
+            st.session_state["seg_temp_dir"] = seg_temp_dir  # store it so it persists for the session
+            st.info(f"Segmentation outputs will be stored in temporary directory: {seg_temp_dir}")
+            
+            progress_bar = st.progress(0, text="Running segmentation...")
+            # Pass the persistent temporary directory to your segmentation function
+            fem.ensemble_segmentation(
+                test_loader, 
+                models_dict, 
+                composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, 
+                n_iterations=10, 
+                progress_bar=progress_bar,
+                output_dir=seg_temp_dir  # your segmentation function should accept an output_dir parameter
+            )
+            progress_bar.progress(100, text="Segmentation complete!")
+            st.success("Segmentation complete! Check the 'Results' tab for output.")
+            
+            # Optionally, list the segmentation files (e.g., using glob)
+            seg_files = glob.glob(os.path.join(seg_temp_dir, "*.nii*"))
+            # st.write("Segmentation outputs:", seg_files)
+
+    # --- Image previews ---
+    st.write("## Preview of Uploaded Files")
+
+    if actual_nifti_paths:
+        st.subheader("🧠 Original Scans")
+        example_img = nib.load(actual_nifti_paths[0])
+        max_slices_orig = example_img.shape[-1]
+        slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
+        cols = st.columns(len(actual_nifti_paths))
+        for i, path in enumerate(actual_nifti_paths):
+            with cols[i]:
+                slice_img = load_slice_lazy(path, slice_idx_orig)
+                st.write(f"**{os.path.basename(path)}**")
+                fig, ax = plt.subplots(figsize=(5, 5))
+                ax.imshow(slice_img, cmap="gray")
+                ax.axis("off")
+                st.pyplot(fig)
+    else:
+        st.warning("No data available to preview.")
+
+    if preproc_paths and preproc_paths != actual_nifti_paths and all(os.path.exists(p) for p in preproc_paths):
+        st.subheader("🧼 Preprocessed Scans")
+        example_img_pre = nib.load(preproc_paths[0])
+        max_slices_pre = example_img_pre.shape[-1]
+        slice_idx_pre = st.slider("Slice Index (Preprocessed)", 0, max_slices_pre - 1, max_slices_pre // 2, key="preproc_slider")
+        cols = st.columns(len(preproc_paths))
+        for i, path in enumerate(preproc_paths):
+            with cols[i]:
+                slice_img = load_slice_lazy(path, slice_idx_pre)
+                st.write(f"**{os.path.basename(path)}**")
+                fig, ax = plt.subplots(figsize=(5, 5))
+                ax.imshow(slice_img, cmap="gray")
+                ax.axis("off")
+                st.pyplot(fig)
 
 # --------------------------------------------------------------------------------
 # TAB 2: RESULTS
 # --------------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def download_example_segmentation_outputs(urls, dest_dir):
+    if not os.path.exists(dest_dir):
+        os.makedirs(dest_dir)
+    for key, url in urls.items():
+        # Extract a filename from the URL (modify if needed)
+        filename = os.path.basename(url.split('?')[0])
+        dest_path = os.path.join(dest_dir, filename)
+        if not os.path.exists(dest_path):
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            with open(dest_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+    return dest_dir
+
+example_segmentation_urls = {
+    "gt": "https://www.dropbox.com/scl/fi/8yohqu370i1cdxr8ntr0a/BraTS2021_00657_seg.nii.gz?rlkey=vj3pzbn0t1ddiaaf2gabt4rgw&st=33heyysz&dl=1",
+    "seg": "https://www.dropbox.com/scl/fi/cs4z413u1pfiro88smjge/hybrid_segmentation_00657.nii.gz?rlkey=4at2g89o8d45iqe6c75niglze&st=r9hc147v&dl=1",
+    "softmax": "https://www.dropbox.com/scl/fi/r9aeece213756h5tz65xd/hybrid_softmax_00657.nii.gz?rlkey=00dxddb13ax60hjzw8ncgifbi&st=rl7o89sr&dl=1",
+    "uncertainty_NCR": "https://www.dropbox.com/scl/fi/qpnl17v7b0it0gsnzyla3/uncertainty_NCR_00657.nii.gz?rlkey=7kpqgew56t1aggg3eie9wisvj&st=l512cph8&dl=1",
+    "uncertainty_ED": "https://www.dropbox.com/scl/fi/3qikofgc4knmuboltujpp/uncertainty_ED_00657.nii.gz?rlkey=fcpuzcfxwrntknwoaoxkjsj3n&st=e4996633&dl=1",
+    "uncertainty_ET": "https://www.dropbox.com/scl/fi/2upyygx6lftpijvrdzhb1/uncertainty_ET_00657.nii.gz?rlkey=4p86lod5tn4075smjq17moe4c&st=jzfvsq3k&dl=1",
+    "uncertainty_global": "https://www.dropbox.com/scl/fi/qpnl17v7b0it0gsnzyla3/uncertainty_NCR_00657.nii.gz?rlkey=7kpqgew56t1aggg3eie9wisvj&st=l512cph8&dl=1",
+}
+
 with results:
     st.header("Results & Visualization")
-    all_outputs = find_available_outputs("./output_segmentations")
+
+    # Add a checkbox to choose whether to display example segmentation outputs
+    if use_example:
+        use_example_results = st.checkbox("Show Example Segmentation Outputs", value=False,
+                                          help="Display precomputed example segmentation outputs")
+    else:
+        use_example_results = False
+    
+    # If the user wants to see the example outputs, download them into a persistent temporary folder.
+    if use_example_results:
+        # Create a persistent temporary directory
+        example_seg_dir = tempfile.mkdtemp()
+        st.session_state["example_seg_dir"] = example_seg_dir  # store for persistence during session
+        st.info(f"Loading example segmentation outputs")
+        download_example_segmentation_outputs(example_segmentation_urls, example_seg_dir)
+        # Use the downloaded files to find outputs.
+        all_outputs = find_available_outputs(example_seg_dir)
+    else:
+        # Otherwise, use local segmentation outputs.
+        all_outputs = find_available_outputs("./output_segmentations")
+
     if not all_outputs:
         st.warning("No segmentations found in ./output_segmentations. Please run a segmentation first.")
     else:
         # Select patient ID and load original file if provided
         patient_ids = sorted(all_outputs.keys())
         chosen_pid = st.selectbox("Select a patient ID:", patient_ids)
-        original_file = st.file_uploader("Upload the original scan for overlay (NIfTI):", type=["nii","nii.gz"])
-        original_path = None
-        brain_data = None
-        if original_file is not None:
-            original_file.seek(0)
-            tmp_orig = os.path.join(os.getcwd(), original_file.name)
-            with open(tmp_orig, "wb") as out:
-                out.write(original_file.read())
-            original_path = tmp_orig
-            brain_data = nib.load(original_path).get_fdata()
+        modalities = ["Flair", "T1ce", "T1", "T2"]
+        if actual_nifti_paths:
+            modality_dict = dict(zip(modalities, actual_nifti_paths))
+            # Let the user select the modality for overlay:
+            selected_modality = st.selectbox("Select the brain scan modality for overlay:", modalities)
+            original_path = modality_dict[selected_modality]
+            st.info(f"Using {selected_modality} scan for overlay.")
+            try:
+                brain_data = nib.load(original_path).get_fdata()
+            except Exception as e:
+                st.error(f"Error loading {selected_modality} scan: {e}")
+        else:
+            original_path = None
+            brain_data = None
 
         # Retrieve segmentation and uncertainty file paths
         seg_path = all_outputs[chosen_pid].get("seg", None)
@@ -798,13 +886,37 @@ with results:
         ed_path  = all_outputs[chosen_pid].get("uncertainty_ED", None)
         et_path  = all_outputs[chosen_pid].get("uncertainty_ET", None)
         global_unc_path = all_outputs[chosen_pid].get("uncertainty_global", None)
+        gt_path_local = all_outputs[chosen_pid].get("gt", None)
+
 
         # Checkboxes to toggle segmentation / uncertainty
         show_seg = st.checkbox("Show Segmentation", value=True)
         show_prob = st.checkbox("Show Probability Map", value=False)
         show_unc = st.checkbox("Show Uncertainty", value=False)
 
+        # --- Ground Truth Options ---
+        # Show GT options if a ground truth is available either via upload or in example outputs.
+        if st.session_state.get("gt_path") is not None or (use_example_results and gt_path_local is not None):
+            show_gt = st.checkbox("Show Ground Truth", value=True)
+        else:
+            show_gt = False
+
         col_seg_options, col_prob_options, col_unc_options = st.columns(3)
+
+        if show_gt:
+            col_gt_options = st.columns(1)[0]
+            with col_gt_options:
+                st.markdown("### Select Ground Truth Tissues to Display")
+                gt_show_ncr = st.checkbox("Necrotic Core (Label 1) [GT]", value=False, key="gt_ncr")
+                gt_show_ed  = st.checkbox("Edema (Label 2) [GT]", value=False, key="gt_ed")
+                gt_show_et  = st.checkbox("Enhancing Tumor (Label 3) [GT]", value=False, key="gt_et")
+                selected_gt_tissues = []
+                if gt_show_ncr:
+                    selected_gt_tissues.append((1, (1, 0, 0)))
+                if gt_show_ed:
+                    selected_gt_tissues.append((2, (0, 1, 0)))
+                if gt_show_et:
+                    selected_gt_tissues.append((3, (0, 0, 1)))
 
         # -----------------------------------------------------------
         # SEGMENTATION OPTIONS
@@ -908,6 +1020,7 @@ with results:
             unc_opacity = 0.4
 
         seg_figure = None
+        gt_figure = None
         unc_figure = None
         threshold = None
 
@@ -1005,63 +1118,102 @@ with results:
                     )
 
 
-            # --- (OPTIONAL) GROUND TRUTH FIGURE ---
-            # If a ground truth file was uploaded in Tab 1, it is stored in st.session_state["gt_path"]
-            if show_seg and seg_figure and st.session_state.get("gt_path") is not None:
-                gt_data = nib.load(st.session_state["gt_path"]).get_fdata()
-                gt_slice = gt_data[..., slice_idx]
-                gt_figure = go.Figure()
-                gt_figure.add_trace(go.Heatmap(
-                    z=brain_slice,
-                    colorscale='gray',
-                    showscale=False,
-                    hoverinfo='skip',
-                    zsmooth="best"
-                ))
-                # We assume the ground truth segmentation uses the same labels:
-                label_names = {1: "Necrotic Core", 2: "Edema", 3: "Enhancing Tumor"}
-                for label_val, color in [(1, (1, 0, 0)), (2, (0, 1, 0)), (3, (0, 0, 1))]:
-                    mask = (gt_slice == label_val)
-                    if np.any(mask):
-                        z_data = mask.astype(float)
-                        r, g, b = color
-                        rgba = f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)'
+            # --- GROUND TRUTH FIGURE ---
+            if show_gt:
+                # Determine which ground truth file to use:
+                if st.session_state.get("gt_path") is not None:
+                    gt_path = st.session_state.get("gt_path")
+                elif use_example_results:
+                    gt_path = all_outputs[chosen_pid].get("gt", None)
+                else:
+                    gt_path = None
+
+                if gt_path is not None:
+                    try:
+                        gt_data = nib.load(gt_path).get_fdata()
+                    except Exception as e:
+                        st.error(f"Error loading ground truth file: {e}")
+                        gt_data = None
+                    if gt_data is not None:
+                        gt_slice = gt_data[..., slice_idx]
+                        # Start building the ground truth figure
+                        gt_figure = go.Figure()
+                        # Add the background brain slice
                         gt_figure.add_trace(go.Heatmap(
-                            z=z_data,
-                            colorscale=[[0, 'rgba(0,0,0,0)'], [1, rgba]],
-                            opacity=seg_opacity,
-                            hoverinfo='skip',
+                            z=brain_slice,
+                            colorscale='gray',
                             showscale=False,
+                            hoverinfo='skip',
                             zsmooth="best"
                         ))
-                # Create composite hover text for ground truth
-                composite_text = np.full(gt_slice.shape, "", dtype='<U50')
-                for label_val in [1, 2, 3]:
-                    composite_text = np.where(gt_slice == label_val, label_names.get(label_val, f"Tissue {label_val}"), composite_text)
-                gt_figure.add_trace(go.Heatmap(
-                    z=brain_slice,
-                    text=composite_text,
-                    hoverinfo='text',
-                    hovertemplate="%{text}<extra></extra>",
-                    colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']],
-                    opacity=1,
-                    showscale=False,
-                    zsmooth="best"
-                ))
-                gt_figure.update_layout(
-                    width=800,
-                    height=800,
-                    margin=dict(l=0, r=0, t=20, b=80),
-                    xaxis=dict(visible=False),
-                    yaxis=dict(
-                        visible=False,
-                        autorange='reversed',
-                        scaleanchor="x",  # lock aspect ratio
-                        scaleratio=1
-                    )
-                )
-
-
+                        # Use the same label names as segmentation:
+                        label_names = {1: "Necrotic Core", 2: "Edema", 3: "Enhancing Tumor"}
+                        if selected_gt_tissues:
+                            # Build overlay traces for each selected GT tissue.
+                            selected_gt_tissues.sort(key=lambda x: x[0])
+                            overlay_traces = []
+                            composite_text = np.full(gt_slice.shape, "", dtype='<U50')
+                            for label_val, color in selected_gt_tissues:
+                                mask = (gt_slice == label_val)
+                                # For debugging: show how many pixels are selected for each tissue.
+                                st.write(f"GT Tissue {label_names.get(label_val, label_val)}: {np.sum(mask)} voxels")
+                                if np.any(mask):
+                                    z_data = mask.astype(float)
+                                    r, g, b = color
+                                    rgba = f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)'
+                                    overlay_traces.append(go.Heatmap(
+                                        z=z_data,
+                                        colorscale=[[0, 'rgba(0,0,0,0)'], [1, rgba]],
+                                        opacity=seg_opacity,  # you can adjust GT opacity if needed
+                                        hoverinfo='skip',
+                                        showscale=False,
+                                        zsmooth="best"
+                                    ))
+                                    label_str = label_names.get(label_val, f"Tissue {label_val}")
+                                    composite_text[mask] = label_str
+                            for trace in overlay_traces:
+                                gt_figure.add_trace(trace)
+                            # Add a final trace for composite hover text.
+                            gt_figure.add_trace(go.Heatmap(
+                                z=brain_slice,
+                                text=composite_text,
+                                hoverinfo='text',
+                                hovertemplate="%{text}<extra></extra>",
+                                colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']],
+                                opacity=1,
+                                showscale=False,
+                                zsmooth="best"
+                            ))
+                        else:
+                            # If no GT tissues are selected, you might choose to display the full ground truth image:
+                            gt_figure = go.Figure(go.Heatmap(
+                                z=brain_slice,
+                                colorscale="gray",
+                                showscale=False
+                            ))
+                            gt_figure.update_layout(
+                                width=800,
+                                height=800,
+                                margin=dict(l=0, r=0, t=20, b=80),
+                                xaxis=dict(visible=False),
+                                yaxis=dict(
+                                    visible=False,
+                                    autorange='reversed',
+                                    scaleanchor="x",  # lock aspect ratio
+                                    scaleratio=1
+                                )
+                            )
+                        gt_figure.update_layout(
+                            width=800,
+                            height=800,
+                            margin=dict(l=0, r=0, t=20, b=80),
+                            xaxis=dict(visible=False),
+                            yaxis=dict(visible=False, autorange='reversed', scaleanchor="x", scaleratio=1)
+                        )
+                    else:
+                        gt_figure = None
+                else:
+                    gt_figure = None
 
             # --- PROBABILITY MAP FIGURE ---
             prob_figure = None
@@ -1244,17 +1396,17 @@ with results:
             # --- DISPLAY FIGURES ---
             # If ground truth exists, show the predicted segmentation and ground truth side by side.
             if show_seg and seg_figure:
-                if st.session_state.get("gt_path") is not None:
+                if gt_figure is not None:
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown("#### Predicted Segmentation")
-                        st.plotly_chart(seg_figure, use_container_width=True)
+                        st.plotly_chart(seg_figure, use_container_width=True, key="seg_chart")
                     with col2:
                         st.markdown("#### Ground Truth Segmentation")
-                        st.plotly_chart(gt_figure, use_container_width=True)
+                        st.plotly_chart(gt_figure, use_container_width=True, key="gt_chart")
                 else:
                     st.markdown("#### Predicted Segmentation")
-                    st.plotly_chart(seg_figure, use_container_width=True)
+                    st.plotly_chart(seg_figure, use_container_width=True, key="seg_chart")
 
             # Display other figures (Probability, Uncertainty) in a separate row
             cols_extra = []
