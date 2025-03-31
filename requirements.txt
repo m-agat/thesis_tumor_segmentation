@@ -1,7 +1,7 @@
 albumentations==1.4.12
 build==1.2.2.post1
 clearml==1.16.5rc0
-cucim-cu12==24.8.0
+# cucim-cu12==24.8.0
 einops==0.8.0
 fire==0.6.0
 gdown==5.2.0
