@@ -526,7 +526,7 @@ def ensemble_segmentation(
                 fused_uncertainty[region] = minmax_uncertainties(uncertainty_sum.cpu().numpy())
 
             for region in ["NCR", "ED", "ET"]:
-                output_path = os.path.join(output_dir, f"new_uncertainty_{region}_{patient_id}.nii.gz")
+                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_new.nii.gz")
                 save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
 
             output_path = os.path.join(
