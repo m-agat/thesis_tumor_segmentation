@@ -20,8 +20,8 @@ import math
 sys.path.append("../")
 import models.models as models
 import config.config as config
-from uncertainty.test_time_augmentation import tta_variance
-from uncertainty.test_time_dropout import ttd_variance, minmax_uncertainties
+from uncertainty.test_time_augmentation import tta_variance, tta_entropy
+from uncertainty.test_time_dropout import ttd_variance, minmax_uncertainties, ttd_entropy
 from dataset import dataloaders
 
 #####################
@@ -410,35 +410,44 @@ def ensemble_segmentation(
             model_predictions = {}
             model_uncertainties = {}            
             # Step 1: Compute adjusted weights for AttUNet & VNet (Performance × Uncertainty Scaling)
+            # Inside the ensemble_segmentation loop, for each model:
             for model_name, (model, inferer) in models_dict.items():
-                # Get dropout uncertainty (TTD)
-                ttd_mean, ttd_uncertainty = ttd_variance(
-                    model, inferer, image, config.device, n_iterations=n_iterations
+                # Get dropout uncertainty (TTD) and augmentation uncertainty (TTA) with entropy
+                ttd_mean, ttd_uncertainty = ttd_entropy(
+                    model, image, inferer, config.device, n_iterations=n_iterations
                 )
-                # Get augmentation uncertainty (TTA)
-                tta_mean, tta_uncertainty = tta_variance(
+                tta_mean, tta_uncertainty = tta_entropy(
                     inferer, image, config.device, n_iterations=n_iterations
                 )
 
-                # Compute the hybrid uncertainty by averaging the normalized uncertainties.
-                hybrid_mean = (ttd_mean + tta_mean) / 2
-                hybrid_mean = np.squeeze(hybrid_mean)
-                hybrid_uncertainty = (
-                    w_ttd * ttd_uncertainty + w_tta * tta_uncertainty
-                )
-                hybrid_uncertainty = np.squeeze(hybrid_uncertainty, axis=0)
+                # Compute the hybrid mean (probability map) and hybrid uncertainty (global entropy map)
+                hybrid_mean = (ttd_mean + tta_mean) / 2  # Expected shape: (C, H, W, D)
+                hybrid_mean = np.squeeze(hybrid_mean)    # Now shape: (C, H, W, D) after removing batch dim
+                hybrid_uncertainty = w_ttd * ttd_uncertainty + w_tta * tta_uncertainty  # Shape: (H, W, D)
+
+                # Compute a tissue-specific prediction from the probability map
+                # Assuming channels: 0=BG, 1=NCR, 2=ED, 3=ET.
+                pred_seg = np.argmax(hybrid_mean, axis=0)  # Shape: (H, W, D)
 
                 model_predictions[model_name] = hybrid_mean
                 model_uncertainties[model_name] = hybrid_uncertainty
 
+                # Instead of indexing hybrid_uncertainty by channel, mask it by the tissue labels
                 for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
-                    alpha = 1
-                    uncertainty_penalty = (1 - alpha * np.median(hybrid_uncertainty[idx]))
-                    print("Uncertainty median ", np.median(hybrid_uncertainty[idx]))
-                    print("Uncertainty penalty ", uncertainty_penalty)
+                    # Create a mask for the current tissue based on the predicted segmentation.
+                    region_mask = (pred_seg == idx)
+                    # Compute the median entropy only over voxels predicted as the current tissue.
+                    if np.sum(region_mask) > 0:
+                        median_uncertainty = np.nanmedian(hybrid_uncertainty[region_mask])
+                    else:
+                        median_uncertainty = 0.0
+
+                    alpha = 0.5
+                    uncertainty_penalty = (1 - alpha * median_uncertainty)
+                    print(f"Model: {model_name}, Region: {region}, Median Entropy: {median_uncertainty:.4f}, Penalty: {uncertainty_penalty:.4f}")
 
                     adjusted_weights[region][model_name] = model_weights[region][model_name] * uncertainty_penalty
-                    print("Adjusted weight: ", adjusted_weights[region][model_name])
+
 
             # Step 2: Normalize weights per region
             for region in ["BG", "NCR", "ED", "ET"]:
@@ -449,25 +458,31 @@ def ensemble_segmentation(
                             f"Model: {model_name}, Region: {region}, Final Weight: {adjusted_weights[region][model_name]:.3f}"
                         )
 
-           # Step 3: Fuse predictions using the adjusted weights.
-            # Note: Since model_predictions now contains probability maps (not raw logits),
-            # we rename variables accordingly.
-            weighted_probs = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
-            for model_name in models_dict.keys():
-                # Convert the stored NumPy probability map to a torch tensor.
-                probs = torch.from_numpy(model_predictions[model_name]).to(config.device)  # shape: [num_classes, H, W, D]
-                for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
-                    weight = torch.tensor(adjusted_weights[region][model_name], dtype=torch.float32, device=config.device)
-                    region_prob = probs[idx]
-                    weighted_probs[region].append(weight * region_prob)
+            # Compute weighted logits fusion as before and also store raw logits for uncertainty computation.
+            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
+            ensemble_logits_list = []  # to store each model's raw logits for uncertainty computation
 
-            # Fuse probabilities by summing weighted contributions.
-            fused_background = torch.sum(torch.stack(weighted_probs["BG"]), dim=0)
-            fused_tumor = [torch.sum(torch.stack(weighted_probs[region]), dim=0) for region in ["NCR", "ED", "ET"]]
-            fused_probs = torch.stack([fused_background] + fused_tumor, dim=0)
-            
-            # Since fused_probs are already normalized probability maps, simply take the argmax.
-            seg = fused_probs.argmax(dim=0).unsqueeze(0)
+            for model_name in models_dict.keys():
+                # Convert the stored NumPy prediction to a torch tensor and move to the device.
+                logits = torch.from_numpy(model_predictions[model_name]).to(config.device)  # shape: [num_classes, H, W, D]
+                ensemble_logits_list.append(logits)
+                
+                # Apply normalized final weights for each region.
+                for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
+                    weight = torch.tensor(adjusted_weights[region][model_name],
+                                          dtype=torch.float32, device=config.device)
+                    logits_tensor = logits[idx]
+                    weighted_logits[region].append(weight * logits_tensor)
+
+            # Fuse logits: weighted sum for each class.
+            fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
+            fused_tumor = [
+                torch.sum(torch.stack(weighted_logits[region]), dim=0)
+                for region in ["NCR", "ED", "ET"]
+            ]
+            fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
+            softmax_seg = torch.nn.functional.softmax(fused_logits, dim=0)
+            seg = softmax_seg.argmax(dim=0).unsqueeze(0)
 
             pred_one_hot = [(seg == i).float() for i in range(0, 4)]
             if gt.shape[1] == 4:
@@ -517,34 +532,38 @@ def ensemble_segmentation(
             )
 
             # Fuse uncertainty maps for tumor regions
+            seg = seg.squeeze(0).cpu().numpy()
             fused_uncertainty = {}
-            for idx, region in enumerate(["NCR", "ED", "ET"]):
-                uncertainty_sum = torch.zeros_like(torch.from_numpy(model_uncertainties[next(iter(model_uncertainties))][idx+1]))
+            for region, label in zip(["NCR", "ED", "ET"], [1, 2, 3]):
+                # Fuse the global uncertainty maps using the adjusted weights (note: here each model provides a global map).
+                uncertainty_sum = np.zeros_like(model_uncertainties[next(iter(model_uncertainties))])
                 for model_name in model_uncertainties:
-                    weight = adjusted_weights[region][model_name]
-                    uncertainty_sum += weight * torch.from_numpy(model_uncertainties[model_name][idx+1])
-                fused_uncertainty[region] = minmax_uncertainties(uncertainty_sum.cpu().numpy())
+                    uncertainty_sum += adjusted_weights[region][model_name] * model_uncertainties[model_name]
+                # Mask the fused uncertainty to only include voxels labeled as the current tissue in the ensemble segmentation.
+                tissue_mask = (seg == label)
+                regional_uncertainty = np.where(tissue_mask, uncertainty_sum, 0)
+                fused_uncertainty[region] = minmax_uncertainties(regional_uncertainty)
 
             for region in ["NCR", "ED", "ET"]:
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_new.nii.gz")
+                output_path = os.path.join(output_dir, f"entropy_uncertainty_{region}_{patient_id}.nii.gz")
                 save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
 
             output_path = os.path.join(
-                output_dir, f"hybrid_softmax_{patient_id}_new.nii.gz"
+                output_dir, f"hybrid_softmax_{patient_id}_entropy.nii.gz"
             )
             softmax_seg = softmax_seg.squeeze(0)  # remove batch dimension
             save_probability_map_as_nifti(softmax_seg, ref_img, output_path)
 
             output_path = os.path.join(
-                output_dir, f"hybrid_segmentation_{patient_id}_new.nii.gz"
+                output_dir, f"hybrid_segmentation_{patient_id}_entropy.nii.gz"
             )
-            seg = seg.squeeze(0)  # remove batch dimension
+              # remove batch dimension
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             torch.cuda.empty_cache()
 
-    csv_path = os.path.join(output_dir, "hybrid_patient_metrics.csv")
-    json_path = os.path.join(output_dir, "hybrid_average_metrics.json")
+    csv_path = os.path.join(output_dir, "hybrid_patient_metrics_entropy.csv")
+    json_path = os.path.join(output_dir, "hybrid_average_metrics_entropy.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
 
@@ -577,7 +596,7 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "01216"
+    patient_id = "00113"
     models_dict = load_all_models()
     _, val_loader = dataloaders.get_loaders(
         batch_size=config.batch_size,

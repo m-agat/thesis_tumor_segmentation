@@ -86,9 +86,47 @@ def save_segmentation_as_nifti(predicted_segmentation, ref_img, output_path):
     nib.save(seg_img, output_path)
     print(f"Segmentation saved to {output_path}")
 
+def save_probability_map_as_nifti(prob_map, ref_img, output_path):
+    """
+    Save a probability map (float32) as a NIfTI file.
+    """
+    if isinstance(prob_map, torch.Tensor):
+        prob_map = prob_map.cpu().numpy()
+    # Make sure to keep the float values
+    prob_map = prob_map.astype(np.float32)
+    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=ref_img.header)
+    nib.save(prob_img, output_path)
+    print(f"Probability map saved to {output_path}")
+
 def extract_patient_id(path):
-    numbers = re.findall(r"\d+", path)
-    return numbers[-1] if numbers else None
+    """
+    Extracts the patient ID from a filename by capturing tokens that consist solely
+    of digits or uppercase letters, while ignoring tokens that are exactly "NCR", "ED", or "ET".
+    
+    Examples:
+      "preproc_ARE_flair.nii"         -> returns "ARE"
+      "uncertainty_NCR_00657.nii.gz"    -> returns "00657"
+      "preproc_NCR_ABC.nii"             -> returns "ABC"
+    """
+    fname = os.path.basename(path)
+    # Capture tokens that follow an underscore and consist of digits and/or uppercase letters.
+    tokens = re.findall(r'_([\dA-Z]+)', fname)
+    
+    # Define tokens to ignore.
+    ignore = {"NCR", "ED", "ET"}
+    
+    # Filter tokens: Allow numeric tokens or alphabetic tokens not in ignore.
+    valid_tokens = []
+    for token in tokens:
+        if token.isdigit():
+            valid_tokens.append(token)
+        elif token.isalpha() and token not in ignore:
+            valid_tokens.append(token)
+    
+    # Return the last valid token if available (you could also choose the first, depending on your naming scheme).
+    if valid_tokens:
+        return valid_tokens[-1]
+    return "UNKNOWN"
 
 def save_uncertainty_as_nifti(uncertainty_map, ref_img, output_path):
     """
@@ -163,14 +201,6 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
         for model_name in model_weights[region]:
             model_weights[region][model_name] /= total_weight
 
-    # Predefine alpha values for each model
-    alpha_values = {
-        "attunet": {"BG": 0.2, "NCR": 0.6, "ED": 0.3, "ET": 0.7},
-        "vnet": {"BG": 0.2, "NCR": 0.6, "ED": 0.9, "ET": 0.7},
-        "swinunetr": {"BG": 0.1, "NCR": 0.1, "ED": 0.2, "ET": 0.1},
-        "segresnet": {"BG": 0.1, "NCR": 0.1, "ED": 0.6, "ET": 0.1},
-    }
-
     # Create a thread-safe progress queue for UI updates
     progress_queue = Queue()
 
@@ -218,37 +248,32 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
 
                 progress_bar.progress(100, text="100% completed")
 
-            # Compute adjusted weights for each model based on uncertainty
-            for model_name in model_predictions:
-                for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
-                    alpha = alpha_values.get(model_name, {"BG": 0.1, "NCR": 0.1, "ED": 0.6, "ET": 0.1}).get(region, 0.1)
-                    penalty = 1 - alpha * np.median(model_uncertainties[model_name][idx])
-                    adjusted_weights[region][model_name] = model_weights[region][model_name] * penalty
-                    print(f"Model: {model_name}, Region: {region}, Uncertainty median: {np.median(model_uncertainties[model_name][idx]):.3f}, Adjusted weight: {adjusted_weights[region][model_name]:.3f}")
-
-            # Normalize adjusted weights per region
-            for region in adjusted_weights:
-                total = sum(adjusted_weights[region].values())
+            # Step 2: Normalize weights per region.
+            for region in ["BG", "NCR", "ED", "ET"]:
+                total_weight = sum(adjusted_weights[region].values())
                 for model_name in adjusted_weights[region]:
-                    adjusted_weights[region][model_name] /= total
-                    print(f"Normalized weight for {model_name} in {region}: {adjusted_weights[region][model_name]:.3f}")
+                    adjusted_weights[region][model_name] /= total_weight
+                    print(f"Model: {model_name}, Region: {region}, Final Weight: {adjusted_weights[region][model_name]:.3f}")
 
-            # Weighted logits fusion
-            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
+            # Step 3: Fuse predictions using the adjusted weights.
+            weighted_probs = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
             for model_name in models_dict.keys():
-                logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
+                # Convert the stored NumPy probability map to a torch tensor.
+                probs = torch.from_numpy(model_predictions[model_name]).to(config.device)  # shape: [num_classes, H, W, D]
                 for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
                     weight = torch.tensor(adjusted_weights[region][model_name], dtype=torch.float32, device=config.device)
-                    weighted_logits[region].append(weight * logits[idx])
-            fused_background = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
-            fused_tumor = [torch.sum(torch.stack(weighted_logits[region]), dim=0) for region in ["NCR", "ED", "ET"]]
-            fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
-            seg = torch.nn.functional.softmax(fused_logits, dim=0).argmax(dim=0)
+                    region_prob = probs[idx]
+                    weighted_probs[region].append(weight * region_prob)
 
-            seg_output_path = os.path.join(output_dir, f"hybrid_segmentation_{patient_id}.nii.gz")
-            save_segmentation_as_nifti(seg, ref_img, seg_output_path)
+            # Fuse probabilities by summing weighted contributions.
+            fused_background = torch.sum(torch.stack(weighted_probs["BG"]), dim=0)
+            fused_tumor = [torch.sum(torch.stack(weighted_probs[region]), dim=0) for region in ["NCR", "ED", "ET"]]
+            fused_probs = torch.stack([fused_background] + fused_tumor, dim=0)
 
-            # Fuse uncertainty maps for tumor regions
+            # Since fused_probs are already normalized probability maps, simply take the argmax.
+            seg = fused_probs.argmax(dim=0).unsqueeze(0)
+
+            # --- Fuse uncertainty maps for all classes (BG, NCR, ED, ET) ---
             fused_uncertainty = {}
             for idx, region in enumerate(["NCR", "ED", "ET"]):
                 uncertainty_sum = torch.zeros_like(torch.from_numpy(model_uncertainties[next(iter(model_uncertainties))][idx+1]))

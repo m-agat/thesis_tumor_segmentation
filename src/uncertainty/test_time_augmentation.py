@@ -133,7 +133,8 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=Non
             augmented_input = apply_augmentation(input_data, aug).to(device)
 
             # Forward pass
-            output = model_inferer(augmented_input).cpu().numpy()
+            pred = model_inferer(augmented_input)
+            output = torch.softmax(pred, dim=1).cpu().numpy()
 
             # Reverse augmentation
             reversed_output = reverse_augmentation(output, inverse_aug)
@@ -151,7 +152,7 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=Non
 
 def tta_entropy(model_inferer, input_data, device, n_iterations=10):
     """
-    Run test-time dropout to estimate uncertainty (entropy-based).
+    Run test-time augmentation to estimate uncertainty (entropy-based).
 
     Args:
         model: Trained model with dropout layers.
@@ -166,7 +167,7 @@ def tta_entropy(model_inferer, input_data, device, n_iterations=10):
     augmentations = get_augmentations()  # Get list of augmentations with inverses
     augmented_outputs = []
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast('cuda'):
         for _ in tqdm(range(n_iterations), desc="Predicting with TTA.."):
             # Randomly pick an augmentation
             aug_entry = np.random.choice(augmentations)
@@ -177,7 +178,8 @@ def tta_entropy(model_inferer, input_data, device, n_iterations=10):
             augmented_input = apply_augmentation(input_data, aug).to(device)
 
             # Forward pass
-            output = torch.sigmoid(model_inferer(augmented_input)).cpu().numpy()
+            pred = model_inferer(augmented_input) #(240, 240, 155)
+            output = torch.softmax(pred, dim=1).cpu().numpy()
 
             # Reverse augmentation
             reversed_output = reverse_augmentation(output, inverse_aug)
@@ -189,6 +191,7 @@ def tta_entropy(model_inferer, input_data, device, n_iterations=10):
     # Compute mean and variance across augmentations
     mean_output = np.mean(augmented_outputs, axis=0)
     mean_output = np.squeeze(mean_output, axis=0)
+    mean_output = np.clip(mean_output, 1e-6, 1.0)
 
     # Compute entropy: -p * log(p)
     epsilon = 1e-6  # To avoid log(0)
