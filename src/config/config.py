@@ -169,21 +169,21 @@ os.makedirs(output_dir, exist_ok=True)
 # ---------------------------------
 # 4. Display Configuration
 # ---------------------------------
-def print_config_summary():
-    print("\n")
-    print("------ Config Summary ------")
-    print("--------------------------------------")
-    print(f"Project root: {project_root}")
-    print(f"Root directory for data: {root_dir}")
-    # print(f"Model path: {model_file_path}")
-    print(f"Output directory: {output_dir}")
-    print(f"Device: {device}")
-    print(f"ROI: {roi}")
-    print(f"Batch Size: {batch_size}")
-    print(f"Sliding Window Batch Size: {sw_batch_size}")
-    print(f"Inference Overlap: {infer_overlap}")
-    print("--------------------------------------")
-    print("\n")
+# def print_config_summary():
+#     print("\n")
+#     print("------ Config Summary ------")
+#     print("--------------------------------------")
+#     print(f"Project root: {project_root}")
+#     print(f"Root directory for data: {root_dir}")
+#     # print(f"Model path: {model_file_path}")
+#     print(f"Output directory: {output_dir}")
+#     print(f"Device: {device}")
+#     print(f"ROI: {roi}")
+#     print(f"Batch Size: {batch_size}")
+#     print(f"Sliding Window Batch Size: {sw_batch_size}")
+#     print(f"Inference Overlap: {infer_overlap}")
+#     print("--------------------------------------")
+#     print("\n")
 
 
 # ---------------------------------
@@ -204,7 +204,7 @@ num_folds = config.get("num_folds", 5)
 # 6. Data Loaders
 # ---------------------------------
 # Initialize data loaders
-test_loader = dataloaders.load_test_data(json_path, root_dir)
+# test_loader = dataloaders.load_test_data(json_path, root_dir)
 
 
 # ---------------------------------
@@ -239,4 +239,4 @@ def find_patient_by_id(patient_id, data_loader):
 # ---------------------------------
 # 8. Final Configuration Summary
 # ---------------------------------
-print_config_summary()
+# print_config_summary()
