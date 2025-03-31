@@ -1,0 +1,16 @@
+{
+    "root_dir": "/home/magata/data/brats2021challenge",
+    "json_path": "/home/magata/data/brats2021challenge/splits/final_training_splits.json",
+    "train_subdir": "split/train",
+    "val_subdir": "split/val",
+    "test_subdir": "split/test",
+    "cross_val_subdir": "RelabeledTrainingData",
+    "default_model_name": "swinunetr_model.pt",
+    "roi": [96, 96, 96],
+    "batch_size": 1,
+    "sw_batch_size": 2,
+    "infer_overlap": 0.5,
+    "max_epochs": 200,
+    "val_every": 10,
+    "num_folds": 5
+  }
