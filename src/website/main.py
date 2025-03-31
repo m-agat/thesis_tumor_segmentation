@@ -13,6 +13,13 @@ import re
 import tempfile 
 
 # Ensemble model
+import os
+import sys
+current_dir = os.path.dirname(os.path.realpath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+    
 import final_ensemble_model as fem
 from dataset.transforms import get_test_transforms
 import config.config as config 
@@ -567,7 +574,6 @@ st.title("🧠 Brain Tumor Segmentation")
 
 tab1, results = st.tabs(["Data Upload & Preview", "Results"])
 
-
 # --------------------------------------------------------------------------------
 # TAB 1: Uploading up to 4 files, Preprocessing (optional), and Running Segmentation
 # --------------------------------------------------------------------------------
@@ -599,6 +605,7 @@ with tab1:
         if example_files:
             st.info("Using example case from sample_data folder.")
             actual_nifti_paths = reorder_modalities(example_files)
+            st.write("Actual NIfTI Paths:", actual_nifti_paths)
         else:
             st.error("No example data found in 'sample_data' folder. Please upload your files.")
             actual_nifti_paths = []
@@ -612,7 +619,6 @@ with tab1:
             st.warning("Please upload your MRI files or select the Example Case option.")
             actual_nifti_paths = []
         else:
-            # Process uploaded files only when not using example case.
             uploaded_filenames = [f.name for f in uploaded_files]
             if uploaded_filenames != st.session_state.get("last_uploaded_files", []):
                 st.session_state["preproc_paths"] = None
@@ -729,18 +735,23 @@ with tab1:
         st.write("## Preview of Uploaded Files")
 
         st.subheader("🧠 Original Scans")
-        example_img = nib.load(actual_nifti_paths[0])
-        max_slices_orig = example_img.shape[-1]
-        slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
-        cols = st.columns(len(actual_nifti_paths))
-        for i, path in enumerate(actual_nifti_paths):
-            with cols[i]:
-                slice_img = load_slice_lazy(path, slice_idx_orig)
-                st.write(f"**{os.path.basename(path)}**")
-                fig, ax = plt.subplots(figsize=(5, 5))
-                ax.imshow(slice_img, cmap="gray")
-                ax.axis("off")
-                st.pyplot(fig)
+
+        if actual_nifti_paths:
+            st.subheader("🧠 Original Scans")
+            example_img = nib.load(actual_nifti_paths[0])
+            max_slices_orig = example_img.shape[-1]
+            slice_idx_orig = st.slider("Slice Index (Original)", 0, max_slices_orig - 1, max_slices_orig // 2, key="orig_slider")
+            cols = st.columns(len(actual_nifti_paths))
+            for i, path in enumerate(actual_nifti_paths):
+                with cols[i]:
+                    slice_img = load_slice_lazy(path, slice_idx_orig)
+                    st.write(f"**{os.path.basename(path)}**")
+                    fig, ax = plt.subplots(figsize=(5, 5))
+                    ax.imshow(slice_img, cmap="gray")
+                    ax.axis("off")
+                    st.pyplot(fig)
+        else:
+            st.warning("No data available to preview.")
 
         if preproc_clicked and preproc_paths and all(os.path.exists(p) for p in preproc_paths):
             if (preproc_paths and preproc_paths != actual_nifti_paths and all(os.path.exists(p) for p in preproc_paths)):

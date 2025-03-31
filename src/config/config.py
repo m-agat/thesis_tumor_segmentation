@@ -9,7 +9,11 @@ import subprocess
 import torch
 from torch.utils.data import DataLoader, Subset
 
-sys.path.append("../")
+current_dir = os.path.dirname(os.path.realpath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
 import dataset.dataloaders as dataloaders
 
 # ---------------------------------
