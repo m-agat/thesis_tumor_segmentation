@@ -532,7 +532,7 @@ def ensemble_segmentation(
             output_path = os.path.join(
                 output_dir, f"hybrid_softmax_{patient_id}_new.nii.gz"
             )
-            softmax_seg = softmax_seg.squeeze(0)  # remove batch dimension
+            softmax_seg = fused_probs  # remove batch dimension
             save_probability_map_as_nifti(softmax_seg, ref_img, output_path)
 
             output_path = os.path.join(
