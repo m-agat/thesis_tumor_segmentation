@@ -163,7 +163,7 @@ model_paths = {
 
 # Output directory
 output_dir = os.path.join(args.output_path, f"{model_name}")
-os.makedirs(output_dir, exist_ok=True)
+# os.makedirs(output_dir, exist_ok=True)
 
 
 # ---------------------------------
