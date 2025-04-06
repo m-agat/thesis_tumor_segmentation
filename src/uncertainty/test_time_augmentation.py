@@ -134,7 +134,7 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=Non
 
             # Forward pass
             pred = model_inferer(augmented_input)
-            output = torch.softmax(pred, dim=1).cpu().numpy()
+            output = pred.cpu().numpy()
 
             # Reverse augmentation
             reversed_output = reverse_augmentation(output, inverse_aug)
@@ -145,7 +145,9 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=Non
 
     # Compute mean and variance across augmentations
     mean_output = np.mean(augmented_outputs, axis=0)
-    variance_output = np.var(augmented_outputs, axis=0)
+
+    softmax_output = torch.softmax(augmented_outputs, dim=0)
+    variance_output = np.var(softmax_output, axis=0)
 
     return mean_output, variance_output
 
