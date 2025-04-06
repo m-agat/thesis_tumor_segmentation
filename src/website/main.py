@@ -605,7 +605,7 @@ with tab1:
                                     help="Use pre-packaged sample images (in the sample_data folder)")
 
     if use_example:
-        example_dest = os.path.join(os.getcwd(), "assets/example")
+        example_dest = os.path.join(os.getcwd(), "assets/example/raw")
         st.info("Using example case.")
         actual_nifti_paths = glob.glob(os.path.join(example_dest, "*.nii*"))
         actual_nifti_paths = reorder_modalities(actual_nifti_paths)
@@ -782,31 +782,6 @@ with tab1:
 # --------------------------------------------------------------------------------
 # TAB 2: RESULTS
 # --------------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def download_example_segmentation_outputs(urls, dest_dir):
-    if not os.path.exists(dest_dir):
-        os.makedirs(dest_dir)
-    for key, url in urls.items():
-        # Extract a filename from the URL (modify if needed)
-        filename = os.path.basename(url.split('?')[0])
-        dest_path = os.path.join(dest_dir, filename)
-        if not os.path.exists(dest_path):
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            with open(dest_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-    return dest_dir
-
-example_segmentation_urls = {
-    "gt": "https://www.dropbox.com/scl/fi/8yohqu370i1cdxr8ntr0a/BraTS2021_00657_seg.nii.gz?rlkey=vj3pzbn0t1ddiaaf2gabt4rgw&st=33heyysz&dl=1",
-    "seg": "https://www.dropbox.com/scl/fi/cs4z413u1pfiro88smjge/hybrid_segmentation_00657.nii.gz?rlkey=4at2g89o8d45iqe6c75niglze&st=r9hc147v&dl=1",
-    "softmax": "https://www.dropbox.com/scl/fi/r9aeece213756h5tz65xd/hybrid_softmax_00657.nii.gz?rlkey=00dxddb13ax60hjzw8ncgifbi&st=rl7o89sr&dl=1",
-    "uncertainty_NCR": "https://www.dropbox.com/scl/fi/qpnl17v7b0it0gsnzyla3/uncertainty_NCR_00657.nii.gz?rlkey=7kpqgew56t1aggg3eie9wisvj&st=l512cph8&dl=1",
-    "uncertainty_ED": "https://www.dropbox.com/scl/fi/3qikofgc4knmuboltujpp/uncertainty_ED_00657.nii.gz?rlkey=fcpuzcfxwrntknwoaoxkjsj3n&st=e4996633&dl=1",
-    "uncertainty_ET": "https://www.dropbox.com/scl/fi/2upyygx6lftpijvrdzhb1/uncertainty_ET_00657.nii.gz?rlkey=4p86lod5tn4075smjq17moe4c&st=jzfvsq3k&dl=1",
-    "uncertainty_global": "https://www.dropbox.com/scl/fi/qpnl17v7b0it0gsnzyla3/uncertainty_NCR_00657.nii.gz?rlkey=7kpqgew56t1aggg3eie9wisvj&st=l512cph8&dl=1",
-}
 
 with results:
     st.header("Results & Visualization")
@@ -818,28 +793,23 @@ with results:
     else:
         use_example_results = False
     
-    # If the user wants to see the example outputs, download them into a persistent temporary folder.
     if use_example_results:
         # Create a persistent temporary directory
-        example_seg_dir = tempfile.mkdtemp()
-        st.session_state["example_seg_dir"] = example_seg_dir  # store for persistence during session
-        st.info(f"Loading example segmentation outputs")
-        download_example_segmentation_outputs(example_segmentation_urls, example_seg_dir)
-        # Use the downloaded files to find outputs.
+        example_seg_dir = os.path.join(os.getcwd(), "assets/example/seg")
+        st.session_state["example_seg_dir"] = example_seg_dir  
         all_outputs = find_available_outputs(example_seg_dir)
     else:
-        # Otherwise, use local segmentation outputs.
-        all_outputs = find_available_outputs("./output_segmentations")
+        all_outputs = find_available_outputs("./assets/segmentations")
 
     if not all_outputs:
-        st.warning("No segmentations found in ./output_segmentations. Please run a segmentation first.")
+        st.warning("No segmentations found. Please run a segmentation first.")
     else:
         # Select patient ID and load original file if provided
         patient_ids = sorted(all_outputs.keys())
         chosen_pid = st.selectbox("Select a patient ID:", patient_ids)
         modalities = ["Flair", "T1ce", "T1", "T2"]
-        if actual_nifti_paths:
-            modality_dict = dict(zip(modalities, actual_nifti_paths))
+        if preproc_paths:
+            modality_dict = dict(zip(modalities, preproc_paths))
             # Let the user select the modality for overlay:
             selected_modality = st.selectbox("Select the brain scan modality for overlay:", modalities)
             original_path = modality_dict[selected_modality]
@@ -879,9 +849,9 @@ with results:
             col_gt_options = st.columns(1)[0]
             with col_gt_options:
                 st.markdown("### Select Ground Truth Tissues to Display")
-                gt_show_ncr = st.checkbox("Necrotic Core (Label 1) [GT]", value=False, key="gt_ncr")
-                gt_show_ed  = st.checkbox("Edema (Label 2) [GT]", value=False, key="gt_ed")
-                gt_show_et  = st.checkbox("Enhancing Tumor (Label 3) [GT]", value=False, key="gt_et")
+                gt_show_ncr = st.checkbox("Necrotic Core (Label 1)", value=False, key="gt_ncr")
+                gt_show_ed  = st.checkbox("Edema (Label 2)", value=False, key="gt_ed")
+                gt_show_et  = st.checkbox("Enhancing Tumor (Label 3)", value=False, key="gt_et")
                 selected_gt_tissues = []
                 if gt_show_ncr:
                     selected_gt_tissues.append((1, (1, 0, 0)))
