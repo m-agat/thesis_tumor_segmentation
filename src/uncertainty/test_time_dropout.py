@@ -42,15 +42,17 @@ def ttd_variance(model, model_inferer, input_data, device, n_iterations=20, on_s
             if on_step:
                 on_step(i+1, n_iterations)
             pred = model_inferer(input_data).to(device)
-            output = torch.nn.functional.softmax(pred, dim=1)
-            all_outputs.append(output.cpu().numpy())
+            output = pred.cpu().numpy()
+            all_outputs.append(output)
 
     # Convert to NumPy array for easier manipulation
     all_outputs = np.array(all_outputs)
 
     # Compute mean and variance across iterations
     mean_output = np.mean(all_outputs, axis=0)  # Shape: (240, 240, 155)
-    variance_output = np.var(all_outputs, axis=0)
+
+    softmax_outputs = torch.nn.functional.softmax(all_outputs, dim=0)
+    variance_output = np.var(softmax_outputs, axis=0)
 
     return mean_output, variance_output
 

@@ -341,6 +341,33 @@ def save_uncertainty_as_nifti(uncertainty_map, ref_img, output_path):
     nib.save(uncertainty_nifti, output_path)
     print(f"Uncertainty map saved to {output_path}")
 
+def compute_disagreement_uncertainty(probability_maps, weights=None):
+    """
+    Compute an uncertainty map based on disagreement in predicted probabilities.
+    
+    Args:
+        probability_maps: List or array of predicted probability maps from each model.
+                          Expected shape: [num_models, num_classes, H, W, D]
+        weights: Optional list or array of weights for each model. Should sum to 1.
+        
+    Returns:
+        uncertainty_map: An uncertainty map computed as the weighted variance across models.
+                         Shape: [num_classes, H, W, D]
+    """
+    probability_maps = np.array(probability_maps)
+    
+    # If weights are provided, apply weighted average and variance computation.
+    if weights is not None:
+        weights = np.array(weights).reshape(-1, 1, 1, 1, 1)
+        mean_prob = np.sum(weights * probability_maps, axis=0)
+        # Compute weighted variance
+        variance = np.sum(weights * (probability_maps - mean_prob)**2, axis=0)
+    else:
+        # Unweighted mean and variance
+        mean_prob = np.mean(probability_maps, axis=0)
+        variance = np.var(probability_maps, axis=0)
+    
+    return variance
 
 def ensemble_segmentation(
     test_loader,
@@ -449,24 +476,24 @@ def ensemble_segmentation(
                             f"Model: {model_name}, Region: {region}, Final Weight: {adjusted_weights[region][model_name]:.3f}"
                         )
 
-           # Step 3: Fuse predictions using the adjusted weights.
-            # Note: Since model_predictions now contains probability maps (not raw logits),
-            # we rename variables accordingly.
-            weighted_probs = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
+            # Step 3: Fuse predictions using the adjusted weights.
+            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
             for model_name in models_dict.keys():
-                # Convert the stored NumPy probability map to a torch tensor.
-                probs = torch.from_numpy(model_predictions[model_name]).to(config.device)  # shape: [num_classes, H, W, D]
+                # Convert the stored NumPy logits map to a torch tensor.
+                # Expected shape: [num_classes, H, W, D]
+                logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
                 for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
                     weight = torch.tensor(adjusted_weights[region][model_name], dtype=torch.float32, device=config.device)
-                    region_prob = probs[idx]
-                    weighted_probs[region].append(weight * region_prob)
+                    region_logits = logits[idx]
+                    weighted_logits[region].append(weight * region_logits)
 
-            # Fuse probabilities by summing weighted contributions.
-            fused_background = torch.sum(torch.stack(weighted_probs["BG"]), dim=0)
-            fused_tumor = [torch.sum(torch.stack(weighted_probs[region]), dim=0) for region in ["NCR", "ED", "ET"]]
-            fused_probs = torch.stack([fused_background] + fused_tumor, dim=0)
-            
-            # Since fused_probs are already normalized probability maps, simply take the argmax.
+            # Fuse logits by summing weighted contributions.
+            fused_bg = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
+            fused_tumor = [torch.sum(torch.stack(weighted_logits[region]), dim=0) for region in ["NCR", "ED", "ET"]]
+            fused_logits = torch.stack([fused_bg] + fused_tumor, dim=0)
+
+            # Convert the ensembled logits to probability maps by applying softmax.
+            fused_probs = torch.softmax(fused_logits, dim=0)
             seg = fused_probs.argmax(dim=0).unsqueeze(0)
 
             pred_one_hot = [(seg == i).float() for i in range(0, 4)]
@@ -525,51 +552,49 @@ def ensemble_segmentation(
                     uncertainty_sum += weight * torch.from_numpy(model_uncertainties[model_name][idx+1])
                 fused_uncertainty[region] = minmax_uncertainties(uncertainty_sum.cpu().numpy())
 
+            disagreement_uncertainty = {}
+            for idx, region in enumerate(["NCR", "ED", "ET"]):
+                # Build a list of predicted probability maps (for the given region) across models.
+                region_prob_maps = []
+                for model_name in models_dict.keys():
+                    # Each model's prediction (hybrid_mean) is stored as logits.
+                    # Convert logits to probabilities for the given region.
+                    logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
+                    # For region "BG", "NCR", "ED", "ET", we assume that the corresponding channel is at index 0,1,2,3 respectively.
+                    region_logits = logits[idx+1]
+                    prob_map = torch.softmax(region_logits, dim=0).cpu().numpy()  # probability map for this region
+                    region_prob_maps.append(prob_map)
+                
+                # Compute disagreement uncertainty (weighted variance across models)
+                # Optionally, if you have model weights for uncertainty, pass them; here we use equal weighting
+                disagreement_uncertainty[region] = compute_disagreement_uncertainty(region_prob_maps)
+
+            # Save uncertainty maps 
             for region in ["NCR", "ED", "ET"]:
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_new.nii.gz")
+                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}.nii.gz")
                 save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
+                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_from_prob.nii.gz")
+                save_uncertainty_as_nifti(disagreement_uncertainty[region], ref_img, output_path)
 
+            # Save probability map
             output_path = os.path.join(
-                output_dir, f"hybrid_softmax_{patient_id}_new.nii.gz"
+                output_dir, f"hybrid_softmax_{patient_id}.nii.gz"
             )
-            softmax_seg = softmax_seg.squeeze(0)  # remove batch dimension
-            save_probability_map_as_nifti(softmax_seg, ref_img, output_path)
+            save_probability_map_as_nifti(fused_probs, ref_img, output_path)
 
+            # Save segmentation
             output_path = os.path.join(
-                output_dir, f"hybrid_segmentation_{patient_id}_new.nii.gz"
+                output_dir, f"hybrid_segmentation_{patient_id}.nii.gz"
             )
             seg = seg.squeeze(0)  # remove batch dimension
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
             torch.cuda.empty_cache()
 
-    csv_path = os.path.join(output_dir, "hybrid_patient_metrics.csv")
-    json_path = os.path.join(output_dir, "hybrid_average_metrics.json")
+    csv_path = os.path.join(output_dir, "hybrid_patient_metrics_final.csv")
+    json_path = os.path.join(output_dir, "hybrid_average_metrics_final.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
-
-
-####################################
-#### Visualize Segmentation ####
-####################################
-
-
-def visualize_segmentation(segmentation, patient_id):
-    """
-    Display and save a middle slice from the segmentation.
-
-    Parameters:
-    - segmentation: 3D NumPy array containing the segmentation result.
-    - patient_id: ID of the patient (used for file naming).
-    """
-    slice_index = segmentation.shape[-1] // 2  # Middle slice
-
-    plt.figure(figsize=(6, 6))
-    plt.imshow(segmentation[:, :, slice_index], cmap="gray")
-    plt.title(f"Segmentation Slice at Index {slice_index}")
-    plt.axis("off")
-    plt.savefig(f"hybrid_segmentation_{patient_id}_slice.png")
-    # plt.show()
 
 
 #######################
