@@ -11,15 +11,17 @@ gt = pd.read_csv(r'\Users\agata\Desktop\thesis_tumor_segmentation\EDA\brats2021_
 gt['patient_id'] = gt['Patient'].apply(lambda x: x.split('_')[-1])
 
 # Load the prediction metrics for each model.
+vnet = pd.read_csv('../models/performance/vnet/patient_metrics_test_vnet.csv')
 att = pd.read_csv('../models/performance/attunet/patient_metrics_test_attunet.csv')
 seg = pd.read_csv('../models/performance/segresnet/patient_metrics_test_segresnet.csv')
 swin = pd.read_csv('../models/performance/swinunetr/patient_metrics_test_swinunetr.csv')
 
 # Format the patient_id column as a 5-digit string.
-for df in [att, seg, swin]:
+for df in [vnet, att, seg, swin]:
     df['patient_id'] = df['patient_id'].apply(lambda x: f"{int(x):05d}")
 
 # Merge each model's results with the ground truth on patient_id.
+vnet_merged = pd.merge(vnet, gt, on='patient_id')
 att_merged = pd.merge(att, gt, on='patient_id')
 seg_merged = pd.merge(seg, gt, on='patient_id')
 swin_merged = pd.merge(swin, gt, on='patient_id')
@@ -37,7 +39,7 @@ def compute_absence_performance(model_df, region_label):
 
 # Calculate for each model and for each region:
 regions = ['NCR present', 'ED present', 'ET present']
-models = {'Attention UNet': att_merged, 'SegResNet': seg_merged, 'SwinUNETR': swin_merged}
+models = {'V-Net': vnet_merged, 'Attention UNet': att_merged, 'SegResNet': seg_merged, 'SwinUNETR': swin_merged}
 
 print("Model robustness in predicting absence (Dice score on absent cases):")
 for region in regions:
