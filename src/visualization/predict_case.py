@@ -6,11 +6,147 @@ import nibabel as nib
 from functools import partial
 from monai.inferers import sliding_window_inference
 import re
+from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
+from monai.metrics import DiceMetric
+from monai.utils.enums import MetricReduction
+from scipy.ndimage import center_of_mass
 
 sys.path.append("../")
 import models.models as models
 import config.config as config
+from dataset import dataloaders
 
+def compute_metrics(pred, gt):
+    """
+    Compute Dice, HD95, Sensitivity, and Specificity for segmentation predictions.
+    """
+    dice_metric = DiceMetric(
+        include_background=False, reduction=MetricReduction.NONE, get_not_nans=True
+    )
+    confusion_metric = ConfusionMatrixMetric(
+        include_background=False,
+        metric_name=["sensitivity", "specificity"],
+        reduction="none",
+        compute_sample=False,
+    )
+
+    # Convert MetaTensors to plain tensors if needed.
+    pred = [p.detach().clone() if hasattr(p, "detach") else p for p in pred]
+    gt = [g.detach().clone() if hasattr(g, "detach") else g for g in gt]
+
+    pred_stack = torch.stack(pred)
+    gt_stack = torch.stack(gt)
+
+    # Compute Dice Scores
+    dice_metric(y_pred=pred, y=gt)
+    dice_scores, not_nans = dice_metric.aggregate()
+    dice_scores = dice_scores.cpu().numpy()
+
+    for i, dice_score in enumerate(dice_scores):
+        if not_nans[i] == 0:  # Tissue is absent in ground truth
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
+            dice_scores[i] = 1.0 if pred_empty else 0.0
+
+    # Compute HD95
+    hd95 = compute_hausdorff_distance(
+        y_pred=pred_stack,
+        y=gt_stack,
+        include_background=False,
+        distance_metric="euclidean",
+        percentile=95,
+    )
+    hd95 = hd95.squeeze(0).cpu().numpy()
+    for i in range(len(hd95)):
+        # Use the i-th class mask directly.
+        pred_empty = torch.sum(pred[i]).item() == 0
+        gt_empty = not_nans[i] == 0
+
+        if pred_empty and gt_empty:
+            print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
+            hd95[i] = 0.0
+
+        elif gt_empty and not pred_empty:  # Ground truth is absent.
+            pred_array = pred[i].cpu().numpy()  # Use pred[i] directly.
+            if np.sum(pred_array) > 0:
+                # Compute Center of Mass for the predicted mask
+                com = center_of_mass(pred_array)
+                com_mask = np.zeros_like(pred_array, dtype=np.uint8)
+                com_coords = tuple(
+                    map(int, map(round, com))
+                )  # Round and convert to integer indices
+                com_mask[com_coords] = 1
+
+                # Convert CoM mask back to tensor
+                com_mask_tensor = (
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                )
+
+                # Compute Hausdorff Distance between prediction and CoM mask
+                mock_val = compute_hausdorff_distance(
+                    y_pred=torch.stack(pred)[i].unsqueeze(0),
+                    y=com_mask_tensor.unsqueeze(0),
+                    include_background=False,
+                    distance_metric="euclidean",
+                    percentile=95,
+                )
+
+                print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
+                print(f"Before update, hd95: {hd95}")
+                hd95[i] = mock_val.item()
+                print(f"After update, hd95: {hd95}")
+            else:
+                # No prediction or GT; HD95 = 0
+                hd95[i] = 0.0
+
+        elif pred_empty and not gt_empty:  # Model predicts tissue is absent
+            gt_array = torch.stack(gt)[i].cpu().numpy()
+            if np.sum(gt_array) > 0:
+                # Compute Center of Mass for the GT mask
+                com = center_of_mass(gt_array)
+                com_mask = np.zeros_like(gt_array, dtype=np.uint8)
+                com_coords = tuple(
+                    map(int, map(round, com))
+                )  # Round and convert to integer indices
+                com_mask[com_coords] = 1
+
+                # Convert CoM mask back to tensor
+                com_mask_tensor = (
+                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
+                )
+
+                # Compute Hausdorff Distance between GT CoM and empty prediction
+                mock_val = compute_hausdorff_distance(
+                    y_pred=torch.stack(gt)[i].unsqueeze(0),
+                    y=com_mask_tensor.unsqueeze(0),
+                    include_background=False,
+                    distance_metric="euclidean",
+                    percentile=95,
+                )
+
+                print(
+                    f"Mock HD95 for region {i} (Prediction absent):",
+                    mock_val.item(),
+                )
+                print(f"Before update, hd95: {hd95}")
+                hd95[i] = mock_val.item()
+                print(f"After update, hd95: {hd95}")
+            else:
+                print(f"Warning: GT mask for region {i} is unexpectedly empty.")
+                hd95[i] = 0.0
+
+    # Compute Sensitivity & Specificity
+    confusion_metric(y_pred=pred, y=gt)
+    sensitivity, specificity = confusion_metric.aggregate()
+    sensitivity = sensitivity.squeeze(0).cpu().numpy()
+    specificity = specificity.squeeze(0).cpu().numpy()
+
+    for i in range(len(sensitivity)):
+        if not_nans[i] == 0:  # Tissue is absent
+            pred_empty = torch.sum(pred_stack[i]).item() == 0
+            sensitivity[i] = 1.0 if pred_empty else 0.0
+            specificity[i] = 1.0
+
+    return dice_scores, hd95, sensitivity, specificity
 
 def load_model(model_class, checkpoint_path, device):
     """
@@ -76,6 +212,7 @@ def ensemble_segmentation(test_loader, models_dict, patient_id=None, output_dir=
     with torch.no_grad():
         for batch_data in test_data_loader:
             image = batch_data["image"].to(config.device)
+            gt = batch_data["label"].to(config.device)
             reference_image_path = batch_data["path"][0]
             patient_id = extract_patient_id(reference_image_path)
             model, inferer = next(iter(models_dict.values()))
@@ -83,6 +220,28 @@ def ensemble_segmentation(test_loader, models_dict, patient_id=None, output_dir=
 
             logits = inferer(image).squeeze(0)
             seg = torch.nn.functional.softmax(logits, dim=0).argmax(dim=0).unsqueeze(0)
+
+            pred_one_hot = [(seg == i).float() for i in range(0, 4)]
+            if gt.shape[1] == 4:
+                # Ground truth is already one-hot encoded (assume channel 0 is background).
+                # Extract channels 1,2,3 and permute to have shape [3, 1, H, W, D].
+                gt_one_hot = gt.permute(1, 0, 2, 3, 4)
+            else:
+                # Ground truth is not one-hot encoded, so create one-hot encoding.
+                gt_one_hot = [(gt == i).float() for i in range(0, 4)]
+                gt_one_hot = torch.stack(gt_one_hot)
+
+            # Get performance metrics
+            dice, hd95, sensitivity, specificity = compute_metrics(
+                pred_one_hot, gt_one_hot
+            )
+            print(
+                f"Dice BG: {dice[0].item():.4f}, Dice NCR: {dice[1].item():.4f}, Dice ED: {dice[2].item():.4f}, Dice ET: {dice[3].item():.4f}\n"
+                f"HD95 BG: {hd95[0].item():.2f}, HD95 NCR: {hd95[1].item():.2f}, HD95 ED: {hd95[2].item():.2f}, HD95 ET: {hd95[3].item():.2f}\n"
+                f"Sensitivity BG: {sensitivity[0].item():.4f}, NCR: {sensitivity[1].item():.4f}, ED: {sensitivity[2].item():.4f}, ET: {sensitivity[3].item():.4f}\n"
+                f"Specificity BG: {specificity[0].item():.4f}, NCR: {specificity[1].item():.4f}, ED: {specificity[2].item():.4f}, ET: {specificity[3].item():.4f}\n"
+            )
+
             seg = seg.squeeze(0)
 
             output_path = os.path.join(output_dir, f"{model_name}_{patient_id}_pred_seg.nii.gz")
@@ -94,7 +253,7 @@ def ensemble_segmentation(test_loader, models_dict, patient_id=None, output_dir=
 
 if __name__ == "__main__":
     # Change this variable to the model you want to use:
-    selected_model = "attunet"  # Options: "attunet", "swinunetr", "segresnet"
+    selected_model = "vnet"  # Options: "attunet", "swinunetr", "segresnet"
 
     # Map model names to their corresponding model class and checkpoint path.
     model_config = {
@@ -115,6 +274,14 @@ if __name__ == "__main__":
     output_dir = os.path.join("../models/predictions", selected_model)
 
     # Change the patient_id here if necessary.
-    patient_id = "01529"
+    patient_id = "01531"
+    train_loader, _ = dataloaders.get_loaders(
+        batch_size=config.batch_size,
+        json_path=config.json_path,
+        basedir=config.root_dir,
+        fold=None,
+        roi=config.roi,
+        use_final_split=True,
+    )
 
-    ensemble_segmentation(config.test_loader, models_dict, patient_id=patient_id, output_dir=output_dir, model_name=selected_model)
+    ensemble_segmentation(train_loader, models_dict, patient_id=patient_id, output_dir=output_dir, model_name=selected_model)
