@@ -7,6 +7,7 @@ __pycache__/
 outputs/
 *.pth
 .win_thesis_env/
+myenv/ 
 
 nnUNet_postprocessed/
 nnUNet_predictions
