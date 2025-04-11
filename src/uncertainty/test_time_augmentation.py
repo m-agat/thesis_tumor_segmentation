@@ -146,8 +146,10 @@ def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=Non
     # Compute mean and variance across augmentations
     mean_output = np.mean(augmented_outputs, axis=0)
 
-    softmax_output = torch.softmax(augmented_outputs, dim=0)
-    variance_output = np.var(softmax_output, axis=0)
+    # Compute variance on the softmax outputs, converting back to NumPy array
+    all_outputs_tensor = torch.from_numpy(augmented_outputs).float()
+    softmax_outputs = torch.nn.functional.softmax(all_outputs_tensor, dim=0)
+    variance_output = np.var(softmax_outputs.cpu().numpy(), axis=0)
 
     return mean_output, variance_output
 

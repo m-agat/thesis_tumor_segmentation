@@ -38,23 +38,30 @@ def ttd_variance(model, model_inferer, input_data, device, n_iterations=20, on_s
     all_outputs = []
     with torch.no_grad(), torch.amp.autocast('cuda'):
         for i in tqdm(range(n_iterations), desc="Predicting with TTD.."):
-            # update progress
             if on_step:
                 on_step(i+1, n_iterations)
             pred = model_inferer(input_data).to(device)
             output = pred.cpu().numpy()
             all_outputs.append(output)
 
-    # Convert to NumPy array for easier manipulation
+    # Convert the list to a NumPy array
     all_outputs = np.array(all_outputs)
 
-    # Compute mean and variance across iterations
-    mean_output = np.mean(all_outputs, axis=0)  # Shape: (240, 240, 155)
+    # Compute mean output across iterations (remains as NumPy array)
+    mean_output = np.mean(all_outputs, axis=0)
 
-    softmax_outputs = torch.nn.functional.softmax(all_outputs, dim=0)
-    variance_output = np.var(softmax_outputs, axis=0)
+    # Convert all_outputs to a torch.Tensor for softmax computation.
+    # Make sure the tensor has the proper dtype (float32) and is on the CPU.
+    all_outputs_tensor = torch.from_numpy(all_outputs).float()
+
+    # Apply softmax along the iteration dimension (axis 0)
+    softmax_outputs = torch.nn.functional.softmax(all_outputs_tensor, dim=0)
+
+    # Compute variance on the softmax outputs, converting back to NumPy array
+    variance_output = np.var(softmax_outputs.cpu().numpy(), axis=0)
 
     return mean_output, variance_output
+
 
 
 def ttd_entropy(model, input_data, model_inferer, device, n_iterations=20):
