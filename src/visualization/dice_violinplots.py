@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Set whether to plot model performance or ensemble performance.
 # Choose plot_type = "model" or "ensemble"
@@ -15,13 +16,11 @@ if plot_type == "model":
     file_pattern = "patient_metrics_test.csv"
 elif plot_type == "ensemble":
     base_path = r"..\ensemble\output_segmentations"
-    # Adjust keys and labels according to your ensemble folder structure
     group_names = {"simple_avg": "Simple Avg",
                    "perf_weight": "Performance Weighted",
                    "tta": "TTA-only", 
                    "ttd": "TTD-only", 
                    "hybrid_new": "Hybrid (TTD+TTA)"}
-    # File naming: e.g., "tta_patient_metrics_test.csv"
     file_pattern = "{}_patient_metrics_test.csv"
 else:
     raise ValueError("plot_type must be 'model' or 'ensemble'.")
@@ -29,40 +28,45 @@ else:
 # Define Dice metrics to plot
 dice_metrics = ["Dice NCR", "Dice ED", "Dice ET"]
 
-# Function to create box plot
-def create_box_plot(data, labels, metric, ax, title=None):
-    ax.boxplot(data, labels=labels)
-    ax.set_title(title if title else metric, fontsize=14)
-    ax.set_ylabel('Dice Score', fontsize=12)
-    ax.set_xlabel('Ensemble Model', fontsize=12)
+# Set style parameters
+sns.set_style("whitegrid")
+plt.rcParams['font.family'] = 'sans-serif'
+
+# Function to create violin plot
+def create_violin_plot(data, labels, metric, ax, title=None):
+    sns.violinplot(data=pd.DataFrame({'Value': data, 'Group': labels}),
+                  x='Group', y='Value', ax=ax,
+                  inner='box',
+                  cut=0)
+    
+    ax.set_title(title if title else metric, fontsize=20)
+    ax.set_ylabel('Dice Score', fontsize=18)
+    ax.set_xlabel('Ensemble Model', fontsize=18)
     ax.tick_params(axis='x', rotation=45)
-    ax.tick_params(axis="both", labelsize=12)
+    ax.tick_params(axis="both", labelsize=15)
 
 # Create the combined subplot figure
 fig_combined, axs = plt.subplots(1, len(dice_metrics), figsize=(18, 6), sharey=True)
 
 # Dictionary to store data for each metric
-metric_data = {metric: {'data': [], 'labels': []} for metric in dice_metrics}
+metric_data = {metric: {'values': [], 'labels': []} for metric in dice_metrics}
 
 # Collect data from all groups
-for metric in dice_metrics:
-    data = []
-    labels = []
-    for key, label in group_names.items():
-        if plot_type == "ensemble":
-            csv_file = os.path.join(base_path, key, file_pattern.format(key))
-        else:
-            csv_file = os.path.join(base_path, key, file_pattern)
-        df = pd.read_csv(csv_file)
-        data.append(df[metric])
-        labels.append(label)
-    metric_data[metric]['data'] = data
-    metric_data[metric]['labels'] = labels
+for key, label in group_names.items():
+    if plot_type == "ensemble":
+        csv_file = os.path.join(base_path, key, file_pattern.format(key))
+    else:
+        csv_file = os.path.join(base_path, key, file_pattern)
+    df = pd.read_csv(csv_file)
+    
+    for metric in dice_metrics:
+        metric_data[metric]['values'].extend(df[metric].values)
+        metric_data[metric]['labels'].extend([label] * len(df[metric]))
 
 # Create combined subplot figure
 for i, metric in enumerate(dice_metrics):
-    create_box_plot(
-        metric_data[metric]['data'],
+    create_violin_plot(
+        metric_data[metric]['values'],
         metric_data[metric]['labels'],
         metric,
         axs[i]
@@ -70,16 +74,17 @@ for i, metric in enumerate(dice_metrics):
     if i != 0:  # Remove y-label for all but first subplot
         axs[i].set_ylabel('')
 
-plt.tight_layout(rect=[0, 0, 1, 0.95])
-plt.savefig("./Figures/box_plots_dice_metrics_combined.png", bbox_inches='tight', dpi=300)
+plt.suptitle("Patient-Level Distribution of Dice Metrics", fontsize=20, y=1.05)
+plt.tight_layout()
+plt.savefig("./Figures/violin_plots_dice_metrics_combined.png", bbox_inches='tight', dpi=300)
 
 # Create individual figures for each metric
 for metric in dice_metrics:
     fig_individual = plt.figure(figsize=(8, 6))
     ax = fig_individual.add_subplot(111)
     
-    create_box_plot(
-        metric_data[metric]['data'],
+    create_violin_plot(
+        metric_data[metric]['values'],
         metric_data[metric]['labels'],
         metric,
         ax,
@@ -89,7 +94,7 @@ for metric in dice_metrics:
     plt.tight_layout()
     # Save individual plot with metric name in filename
     metric_filename = metric.replace(" ", "_").lower()
-    plt.savefig(f"./Figures/box_plot_{metric_filename}.png", bbox_inches='tight', dpi=300)
+    plt.savefig(f"./Figures/violin_plot_{metric_filename}.png", bbox_inches='tight', dpi=300)
     plt.close()
 
 # Show the combined plot
