@@ -15,6 +15,7 @@ import pandas as pd
 import json
 import re
 import math
+from torch.utils.data import Subset
 
 # Add custom modules
 sys.path.append("../")
@@ -267,13 +268,35 @@ def compute_disagreement_uncertainty(probability_maps, weights=None):
         variance = np.var(probability_maps, axis=0)
     return variance
 
+def compute_hard_label_disagreement(hard_label_maps):
+    """
+    Compute voxel-wise disagreement for a set of binary hard label maps
+    using Shannon entropy.
+    
+    Args:
+        hard_label_maps (list of np.array): A list of binary (0/1) maps of shape (H, W, D)
+            where 1 indicates the presence of the region and 0 its absence.
+    
+    Returns:
+        np.array: A disagreement map of shape (H, W, D) where higher values indicate higher disagreement.
+    """
+    # Convert list to numpy array with shape [N_models, H, W, D]
+    preds = np.array(hard_label_maps)
+    # Compute the fraction of models that predict the region (i.e. vote = 1)
+    p = np.mean(preds, axis=0)  # p has shape (H, W, D) and values between 0 and 1
+    eps = 1e-6  # small constant to avoid log(0)
+    # Compute entropy (uncertainty) at each voxel:
+    # Note: The entropy is maximum when p is 0.5 and zero when p is 0 or 1.
+    disagreement = - (p * np.log(p + eps) + (1 - p) * np.log(1 - p + eps))
+    return disagreement
+
 def ensemble_segmentation(
     test_loader,
     models_dict,
     composite_score_weights,
     n_iterations=10,
     patient_id=None,
-    output_dir="./output_segmentations/hybrid",
+    output_dir="./output_segmentations/hybrid_new",
 ):
     """
     Perform segmentation using an ensemble of multiple models.
@@ -284,6 +307,8 @@ def ensemble_segmentation(
       - The TTD and TTA uncertainties are applied sequentially (first TTD, then TTA)
         to weight the base prediction (here we use the TTD mean).
       - The performance weight (computed earlier) is still applied as a scalar.
+      - **New**: Save each model's combined uncertainty (average of TTD and TTA)
+        into a dictionary to allow fusion of uncertainty maps.
     """
     os.makedirs(output_dir, exist_ok=True)
     if patient_id is not None:
@@ -316,8 +341,10 @@ def ensemble_segmentation(
             gt = batch_data["label"].to(config.device)
             print(f"\nProcessing patient: {patient_id}\n")
             
-            # Prepare dictionaries to store per-model adjusted (voxel-level weighted) predictions.
+            # Prepare dictionaries to store per-model adjusted (voxel-level weighted) predictions
+            # and model uncertainties.
             model_predictions = {}
+            model_uncertainties = {}   # NEW: dictionary to save each model's uncertainty
 
             # STEP 1: For each model, get TTD and TTA uncertainties and predictions,
             # then compute a voxel-level weighted prediction.
@@ -332,7 +359,7 @@ def ensemble_segmentation(
                 )
 
                 eps = 1e-6  # small constant to avoid division by zero
-                # Compute voxel-level inverse uncertainty maps
+                # Compute voxel-level inverse uncertainty maps (used for weighting the prediction)
                 inv_ttd = 1.0 / (ttd_uncertainty + eps)
                 inv_tta = 1.0 / (tta_uncertainty + eps)
 
@@ -345,6 +372,12 @@ def ensemble_segmentation(
                 adjusted_prediction = np.squeeze(adjusted_prediction)  # expected shape: [num_classes, H, W, D]
 
                 model_predictions[model_name] = adjusted_prediction
+
+                # NEW: Compute a combined uncertainty for the current model.
+                # Here, we simply average the TTD and TTA uncertainties.
+                combined_uncertainty = (ttd_uncertainty + tta_uncertainty) / 2.0
+                # Squeeze if needed to remove unnecessary dimensions.
+                model_uncertainties[model_name] = np.squeeze(combined_uncertainty)
 
             # STEP 2: Fuse predictions from all models.
             # Here we still use the scalar performance (composite) weights computed earlier.
@@ -410,6 +443,20 @@ def ensemble_segmentation(
                 }
             )
 
+            adjusted_weights = {region: model_weights[region] for region in ["NCR", "ED", "ET"]}
+
+            # Fuse uncertainty maps for tumor regions using the saved model_uncertainties.
+            fused_uncertainty = {}
+            for idx, region in enumerate(["NCR", "ED", "ET"]):
+                # Use one model's uncertainty shape to create an initial zero tensor.
+                uncertainty_sum = torch.zeros_like(torch.from_numpy(model_uncertainties[next(iter(model_uncertainties))][idx+1]))
+                for model_name in model_uncertainties:
+                    weight = adjusted_weights[region][model_name]
+                    # Here we assume that model_uncertainties[model_name] has shape [num_classes, H, W, D]
+                    # and region indices 1,2,3 correspond to "NCR", "ED", "ET"
+                    uncertainty_sum += weight * torch.from_numpy(model_uncertainties[model_name][idx+1])
+                fused_uncertainty[region] = minmax_uncertainties(uncertainty_sum.cpu().numpy())
+
             disagreement_uncertainty = {}
             for idx, region in enumerate(["NCR", "ED", "ET"]):
                 region_prob_maps = []
@@ -419,10 +466,29 @@ def ensemble_segmentation(
                     prob_map = torch.softmax(region_logits, dim=0).cpu().numpy()
                     region_prob_maps.append(prob_map)
                 disagreement_uncertainty[region] = compute_disagreement_uncertainty(region_prob_maps)
-
+                
+            disagreement_uncertainty_hl = {}
+            for idx, region in enumerate(["NCR", "ED", "ET"]):
+                hard_label_maps = []
+                for model_name in models_dict.keys():
+                    # Convert model predictions (assumed to be a numpy array) to a tensor
+                    logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
+                    # Compute the hard segmentation mask for the entire image (argmax over channels)
+                    # This results in a tensor of shape [H, W, D] with labels 0 (BG), 1 (NCR), 2 (ED), 3 (ET)
+                    seg = torch.argmax(logits, dim=0)
+                    # For the current region, create a binary mask (1 where the label equals idx+1)
+                    hard_map = (seg == (idx + 1)).cpu().numpy().astype(np.uint8)
+                    hard_label_maps.append(hard_map)
+                # Compute the disagreement map using the helper function defined above
+                disagreement_uncertainty_hl[region] = compute_hard_label_disagreement(hard_label_maps)
+                
             for region in ["NCR", "ED", "ET"]:
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_from_prob.nii.gz")
+                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_fused.nii.gz")
+                save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
+                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement.nii.gz")
                 save_uncertainty_as_nifti(disagreement_uncertainty[region], ref_img, output_path)
+                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement_hl.nii.gz")
+                save_uncertainty_as_nifti(disagreement_uncertainty_hl[region], ref_img, output_path)
 
             output_path = os.path.join(output_dir, f"hybrid_softmax_{patient_id}.nii.gz")
             save_probability_map_as_nifti(fused_probs, ref_img, output_path)
@@ -433,8 +499,8 @@ def ensemble_segmentation(
 
             torch.cuda.empty_cache()
 
-    csv_path = os.path.join(output_dir, "hybrid_patient_metrics_final.csv")
-    json_path = os.path.join(output_dir, "hybrid_average_metrics_final.json")
+    csv_path = os.path.join(output_dir, "hybrid_patient_metrics_test.csv")
+    json_path = os.path.join(output_dir, "hybrid_average_metrics_test.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
 
