@@ -339,7 +339,7 @@ def ensemble_segmentation(
             # then compute a voxel-level weighted prediction.
             for model_name, (model, inferer) in models_dict.items():
                 ttd_mean, ttd_uncertainty = ttd_variance(
-                    inferer, image, config.device, n_iterations=n_iterations
+                    model, inferer, image, config.device, n_iterations=n_iterations
                 )
 
                 eps = 1e-6  # small constant to avoid division by zero
@@ -462,15 +462,15 @@ def ensemble_segmentation(
             for region in ["NCR", "ED", "ET"]:
                 output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_fused.nii.gz")
                 save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement.nii.gz")
-                save_uncertainty_as_nifti(disagreement_uncertainty[region], ref_img, output_path)
+                # output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement.nii.gz")
+                # save_uncertainty_as_nifti(disagreement_uncertainty[region], ref_img, output_path)
                 output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement_hl.nii.gz")
                 save_uncertainty_as_nifti(disagreement_uncertainty_hl[region], ref_img, output_path)
 
             output_path = os.path.join(output_dir, f"ttd_softmax_{patient_id}.nii.gz")
             save_probability_map_as_nifti(fused_probs, ref_img, output_path)
 
-            output_path = os.path.join(output_dir, f"ttd_segmentation_{patient_id}.nii.gz")
+            output_path = os.path.join(output_dir, f"ttd_{patient_id}_pred_seg.nii.gz")
             seg = seg.squeeze(0)
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
@@ -486,7 +486,7 @@ def ensemble_segmentation(
 #######################
 
 if __name__ == "__main__":
-    patient_id = "01556"
+    patient_id = "01147"
     models_dict = load_all_models()
     composite_score_weights = {
         "Dice": 0.45,
@@ -495,5 +495,5 @@ if __name__ == "__main__":
         "Specificity": 0.1,
     }
     ensemble_segmentation(
-        config.test_loader, models_dict, composite_score_weights, n_iterations=10
+        config.test_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=patient_id
     )
