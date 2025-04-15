@@ -20,6 +20,14 @@ def load_data(csv_files, model_names):
         data_frames.append(df)
     return pd.concat(data_frames, ignore_index=True)
 
+def get_numeric_metrics(data):
+    """
+    Returns a list of numeric metric columns from the DataFrame.
+    Excludes non-numeric columns like 'Model' and 'Patient'.
+    """
+    numeric_cols = data.select_dtypes(include=['float64', 'int64']).columns
+    return [col for col in numeric_cols if col not in ['Model', 'Patient']]
+
 def check_normality(data, group_col, metric):
     """
     For each group in the grouping column, perform a Shapiro–Wilk test on the metric values.
@@ -59,31 +67,38 @@ def posthoc_test(data, group_col, metric, test_type):
     Perform post-hoc pairwise comparisons based on the overall test type.
     For ANOVA, use Tukey's HSD.
     For non-parametric, use pairwise Mann-Whitney U tests with Bonferroni correction.
+    Returns a list of significant comparisons with their p-values.
     """
     groups = data[group_col].unique()
-    print("\nPost-hoc pairwise comparisons:")
+    significant_comparisons = []
     
     if test_type == "ANOVA":
-        # Tukey's HSD test using statsmodels
         tukey = pairwise_tukeyhsd(endog=data[metric].dropna(), groups=data[group_col].dropna(), alpha=0.05)
-        print(tukey.summary())
+        results = tukey.summary().data[1:]  # Skip header row
+        for row in results:
+            if float(row[4]) < 0.05:  # p-value column
+                significant_comparisons.append({
+                    'group1': row[0],
+                    'group2': row[1],
+                    'p_value': float(row[4])
+                })
     else:
-        # Non-parametric: pairwise Mann-Whitney U tests with Bonferroni correction.
         comparisons = list(itertools.combinations(groups, 2))
-        p_values = []
         for g1, g2 in comparisons:
             sample1 = data.loc[data[group_col] == g1, metric].dropna()
             sample2 = data.loc[data[group_col] == g2, metric].dropna()
             stat, p = stats.mannwhitneyu(sample1, sample2, alternative='two-sided')
-            p_values.append(p)
-            print(f"Comparison: {g1} vs {g2}: Mann-Whitney U p-value = {p:.4f}")
-        # Apply Bonferroni correction
-        bonferroni_p = [min(p * len(comparisons), 1.0) for p in p_values]
-        print("\nAfter Bonferroni correction:")
-        for (g1, g2), p_corr in zip(comparisons, bonferroni_p):
-            print(f"Comparison: {g1} vs {g2}: corrected p-value = {p_corr:.4f}")
+            p_corrected = min(p * len(comparisons), 1.0)  # Bonferroni correction
+            if p_corrected < 0.05:
+                significant_comparisons.append({
+                    'group1': g1,
+                    'group2': g2,
+                    'p_value': p_corrected
+                })
+    
+    return significant_comparisons
 
-def main(csvs, models, metric):
+def main(csvs, models, output_file):
     # Convert comma-separated arguments into lists
     csv_files = [s.strip() for s in csvs.split(',')]
     model_names = [s.strip() for s in models.split(',')]
@@ -95,31 +110,64 @@ def main(csvs, models, metric):
     data = load_data(csv_files, model_names)
     print(f"Combined data shape: {data.shape}")
     
-    # Check normality for each model group
-    print(f"\nChecking normality for metric '{metric}' grouped by 'Model':")
-    normality = check_normality(data, "Model", metric)
+    # Get all numeric metrics
+    metrics = get_numeric_metrics(data)
+    print(f"Found {len(metrics)} metrics to analyze")
     
-    # Choose and perform the appropriate test
-    test_type, overall_stat, overall_p = choose_test(data, "Model", metric, normality)
+    # Store significant results
+    significant_results = []
     
-    # Perform post-hoc pairwise comparisons
-    posthoc_test(data, "Model", metric, test_type)
+    # Analyze each metric
+    for metric in metrics:
+        print(f"\nAnalyzing metric: {metric}")
+        
+        # Check normality
+        normality = check_normality(data, "Model", metric)
+        
+        # Choose and perform the appropriate test
+        test_type, overall_stat, overall_p = choose_test(data, "Model", metric, normality)
+        
+        # If overall test is significant, perform post-hoc tests
+        if overall_p < 0.05:
+            print(f"Significant overall difference found for {metric} (p = {overall_p:.4f})")
+            posthoc_comparisons = posthoc_test(data, "Model", metric, test_type)
+            
+            # Add significant results to the list
+            for comp in posthoc_comparisons:
+                significant_results.append({
+                    'metric': metric,
+                    'test_type': test_type,
+                    'overall_p_value': overall_p,
+                    'group1': comp['group1'],
+                    'group2': comp['group2'],
+                    'posthoc_p_value': comp['p_value']
+                })
+    
+    # Save significant results to CSV
+    if significant_results:
+        results_df = pd.DataFrame(significant_results)
+        results_df.to_csv(output_file, index=False)
+        print(f"\nSaved {len(significant_results)} significant results to {output_file}")
+    else:
+        print("\nNo significant differences found for any metric.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Check distribution and choose statistical test across multiple CSV files.")
+    parser = argparse.ArgumentParser(description="Perform statistical tests across multiple CSV files for all metrics.")
     parser.add_argument("--csvs", required=True,
                         help="Comma-separated list of CSV file paths (one per model).")
     parser.add_argument("--models", required=True,
                         help="Comma-separated list of model names corresponding to the CSV files.")
-    parser.add_argument("--metric", required=True,
-                        help="The column name for the performance metric to test (e.g., 'Dice overall').")
+    parser.add_argument("--output", required=True,
+                        help="Output CSV file path to save significant results.")
     args = parser.parse_args()
     
-    main(args.csvs, args.models, args.metric)
+    main(args.csvs, args.models, args.output)
 
+# Example usage:
+# python compare_models.py --csvs "model1.csv,model2.csv,model3.csv" --models "Model1,Model2,Model3" --output "significant_results.csv"
 
-# python compare_models.py --csvs "../models/performance/vnet/patient_metrics_test.csv,../models/performance/segresnet/patient_metrics_test.csv,../models/performance/attunet/patient_metrics_test.csv,../models/performance/swinunetr/patient_metrics_test.csv" --models "VNet,SegResNet,AttUNet,SwinUNETR" --metric "Dice overall"
+# python compare_models.py --csvs "../models/performance/vnet/patient_metrics_test.csv,../models/performance/segresnet/patient_metrics_test.csv,../models/performance/attunet/patient_metrics_test.csv,../models/performance/swinunetr/patient_metrics_test.csv" --models "VNet,SegResNet,AttUNet,SwinUNETR" --output "significant_results.csv"
 
-# python compare_models.py --csvs "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv,../ensemble/output_segmentations/performance_weighted/perf_weight_patient_metrics_test.csv, ../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv,../ensemble/output_segmentations/hybrid_new/hybrid_patient_metrics_test.csv, ../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv" --models "Simple Avg,Performance Weighted,TTD,Hybrid,TTA" --metric "Dice overall"
+# python compare_models.py --csvs "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv,../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv, ../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv,../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv, ../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv" --models "Simple Avg,Performance Weighted,TTD,Hybrid,TTA" --output "significant_results.csv"
 
-# python compare_models.py --csvs "../models/performance/segresnet/patient_metrics_test_segresnet.csv,../models/performance/attunet/patient_metrics_test_attunet.csv,../models/performance/swinunetr/patient_metrics_test_swinunetr.csv,../ensemble/output_segmentations/hybrid_new/hybrid_patient_metrics_test.csv" --models "SegResNet,Attention UNet,SwinUNETR,Hybrid" --metric "Dice overall"
+# python compare_models.py --csvs "../models/performance/segresnet/patient_metrics_test_segresnet.csv,../models/performance/attunet/patient_metrics_test_attunet.csv,../models/performance/swinunetr/patient_metrics_test_swinunetr.csv,../ensemble/output_segmentations/hybrid_new/hybrid_patient_metrics_test.csv" --models "SegResNet,Attention UNet,SwinUNETR,Hybrid" --output "significant_results.csv"

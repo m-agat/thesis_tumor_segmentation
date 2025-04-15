@@ -18,7 +18,7 @@ import numpy as np
 #     'SegResNet': seg_df,
 #     'SwinUNETR': swin_df
 # }
-df = pd.read_csv('../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv')
+df = pd.read_csv('../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv')
 # Define metrics to average (excluding HD95)
 metrics_to_average = ['Dice', 'Sensitivity', 'Specificity', 'HD95']
 
