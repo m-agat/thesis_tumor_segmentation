@@ -204,7 +204,7 @@ num_folds = config.get("num_folds", 5)
 # 6. Data Loaders
 # ---------------------------------
 # Initialize data loaders
-# test_loader = dataloaders.load_test_data(json_path, root_dir)
+test_loader = dataloaders.load_test_data(json_path, root_dir)
 
 
 # ---------------------------------

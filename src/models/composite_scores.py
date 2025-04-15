@@ -1,7 +1,7 @@
 import pandas as pd 
 
-model_name = "swinunetr"
-metrics_path = f"./performance/{model_name}/patient_metrics.csv"
+model_name = "vnet"
+metrics_path = f"./performance/{model_name}/patient_metrics_test_{model_name}.csv"
 metrics_df = pd.read_csv(metrics_path)
 
 # Define composite score weights
@@ -58,3 +58,15 @@ composite_scores_df = composite_scores_df[column_order]
 # Save to CSV
 composite_scores_csv_path = f"./performance/{model_name}/composite_scores.csv"
 composite_scores_df.to_csv(composite_scores_csv_path, index=False)
+
+# Compute the average composite score for each sub-region
+average_scores = composite_scores_df[["BG", "NCR", "ED", "ET"]].mean()
+
+# Print the results
+print("\nAverage Composite Scores per Sub-region:")
+scores = []
+for region, avg_score in average_scores.items():
+    scores.append(avg_score)
+    print(f"{region}: {avg_score:.4f}")
+
+print(f"Average overall scores: {sum(scores[1:])/3}")

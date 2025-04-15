@@ -58,10 +58,7 @@ def load_all_models():
         ),
         "attunet": load_model(
             models.attunet_model, config.model_paths["attunet"], config.device
-        ),
-        "vnet": load_model(
-            models.vnet_model, config.model_paths["vnet"], config.device
-        ),
+        )
     }
 
 
@@ -314,7 +311,7 @@ def ensemble_segmentation(
     models_dict,
     composite_score_weights,
     patient_id=None,
-    output_dir="./output_segmentations/performance_weighted",
+    output_dir="./output_segmentations/perf_weight",
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -396,13 +393,6 @@ def ensemble_segmentation(
             pred_one_hot = [(seg == i).float() for i in range(1, 4)]
             gt_one_hot = [(gt == i).float() for i in range(1, 4)]
 
-            # print(f"Shape of seg: {seg.shape}")
-            # print(f"Shape of gt: {gt.shape}")
-            # print(f"Unique values in seg: {torch.unique(seg)}")
-            # print(f"Unique values in gt: {torch.unique(gt)}")
-            # print(f"Length of pred_one_hot: {len(pred_one_hot)}")
-            # print(f"Length of gt_one_hot: {len(gt_one_hot)}")
-
             dice, hd95, sensitivity, specificity = compute_metrics(
                 pred_one_hot, gt_one_hot
             )
@@ -439,12 +429,9 @@ def ensemble_segmentation(
 
             # Save segmentation
             output_path = os.path.join(
-                output_dir, f"perf_weigh_segmentation_{patient_id}.nii.gz"
+                output_dir, f"perf_weight_{patient_id}_pred_seg.nii.gz"
             )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
-
-            # Display a middle slice
-            # visualize_segmentation(seg.cpu().numpy(), patient_id)
 
             start_time = time.time()
             torch.cuda.empty_cache()
@@ -483,7 +470,7 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    # patient_id = "01556"
+    patient_id = "00332"
     models_dict = load_all_models()
     composite_score_weights = {
         "Dice": 0.45,
@@ -491,4 +478,4 @@ if __name__ == "__main__":
         "Sensitivity": 0.3,
         "Specificity": 0.1,
     }
-    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights)
+    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights, patient_id=patient_id)
