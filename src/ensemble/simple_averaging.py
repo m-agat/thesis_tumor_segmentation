@@ -59,9 +59,6 @@ def load_all_models():
         "attunet": load_model(
             models.attunet_model, config.model_paths["attunet"], config.device
         ),
-        "vnet": load_model(
-            models.vnet_model, config.model_paths["vnet"], config.device
-        ),
     }
 
 
@@ -328,13 +325,6 @@ def ensemble_segmentation(
             pred_one_hot = [(seg == i).float() for i in range(1, 4)]
             gt_one_hot = [(gt == i).float() for i in range(1, 4)]
 
-            # print(f"Shape of seg: {seg.shape}")
-            # print(f"Shape of gt: {gt.shape}")
-            # print(f"Unique values in seg: {torch.unique(seg)}")
-            # print(f"Unique values in gt: {torch.unique(gt)}")
-            # print(f"Length of pred_one_hot: {len(pred_one_hot)}")
-            # print(f"Length of gt_one_hot: {len(gt_one_hot)}")
-
             dice, hd95, sensitivity, specificity = compute_metrics(
                 pred_one_hot, gt_one_hot
             )
@@ -371,14 +361,10 @@ def ensemble_segmentation(
 
             # Save segmentation
             output_path = os.path.join(
-                output_dir, f"simple_avg_segmentation_{patient_id}.nii.gz"
+                output_dir, f"simple_avg_{patient_id}_pred_seg.nii.gz"
             )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
-            # Display a middle slice
-            # visualize_segmentation(seg.cpu().numpy(), patient_id)
-
-            start_time = time.time()
             torch.cuda.empty_cache()
 
     csv_path = os.path.join(output_dir, "simple_avg_patient_metrics.csv")
@@ -387,34 +373,12 @@ def ensemble_segmentation(
     save_average_metrics(patient_metrics, json_path)
 
 
-####################################
-#### Visualize Segmentation ####
-####################################
-
-
-def visualize_segmentation(segmentation, patient_id):
-    """
-    Display and save a middle slice from the segmentation.
-
-    Parameters:
-    - segmentation: 3D NumPy array containing the segmentation result.
-    - patient_id: ID of the patient (used for file naming).
-    """
-    slice_index = segmentation.shape[-1] // 2  # Middle slice
-
-    plt.figure(figsize=(6, 6))
-    plt.imshow(segmentation[:, :, slice_index], cmap="gray")
-    plt.title(f"Segmentation Slice at Index {slice_index}")
-    plt.axis("off")
-    plt.savefig(f"simple_avg_segmentation_{patient_id}_slice.png")
-    # plt.show()
-
 
 #######################
 #### Run Inference ####
 #######################
 
 if __name__ == "__main__":
-    # patient_id = "01556"
+    patient_id = "00332"
     models_dict = load_all_models()
     ensemble_segmentation(config.test_loader, models_dict)
