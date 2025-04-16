@@ -56,8 +56,8 @@ filtered_data[[f'Best_Dice{metric}', f'SecondBest_Dice{metric}', f'Diff_Dice{met
     lambda row: pd.Series(get_ordered_metrics(row, keys)), axis=1)
 
 # Define a threshold for a significant difference (e.g., at least 0.10)
-threshold_diff = 0.05
-signif_cases = filtered_data[filtered_data[f'Diff_Dice{metric}'] >= threshold_diff]
+threshold_diff = 0
+signif_cases = filtered_data[filtered_data[f'Diff_Dice{metric}'] >= threshold_diff].sort_values(by=f'Diff_Dice{metric}', ascending=False)
 
 print(f"Cases where one model significantly outperforms the others in Dice {metric}:")
 print(signif_cases[['patient_id', f'Best_Dice{metric}', f'Best_Model', f'SecondBest_Dice{metric}', f'Second_Best_Model', f'Diff_Dice{metric}']])
@@ -69,7 +69,7 @@ data['DiceOverall_Var'] = data[['SimpleAvg_DiceOverall', 'PerfWeight_DiceOverall
 
 # Define inconsistency as those in the top 10th percentile of variance.
 variance_threshold = data['DiceOverall_Var'].quantile(0.90)
-inconsistent_cases = data[data['DiceOverall_Var'] >= variance_threshold]
+inconsistent_cases = data[data['DiceOverall_Var'] >= variance_threshold].sort_values(by='DiceOverall_Var', ascending=False)
 
 print("\nCases with high inconsistency in Dice overall (top 10th percentile of variance):")
 print(inconsistent_cases[['patient_id', 'SimpleAvg_DiceOverall', 'PerfWeight_DiceOverall', 'TTD_DiceOverall', 'Hybrid_DiceOverall', 'DiceOverall_Var']])
