@@ -433,6 +433,13 @@ def ensemble_segmentation(
             )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
+            # Save probability maps
+            probs = torch.softmax(fused_logits, dim=0)  # Shape: (4, H, W, D)
+            prob_output_path = os.path.join(
+                output_dir, f"perf_weight_softmax_{patient_id}.nii.gz"
+            )
+            save_segmentation_as_nifti(probs, reference_image_path, prob_output_path)
+
             start_time = time.time()
             torch.cuda.empty_cache()
 
@@ -470,7 +477,7 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "00332"
+    patient_id = "01502"
     models_dict = load_all_models()
     composite_score_weights = {
         "Dice": 0.45,
@@ -478,4 +485,4 @@ if __name__ == "__main__":
         "Sensitivity": 0.3,
         "Specificity": 0.1,
     }
-    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights, patient_id=patient_id)
+    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights)

@@ -365,6 +365,13 @@ def ensemble_segmentation(
             )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
+            # Save probability maps
+            probs = torch.softmax(avg_logits, dim=0)  # Shape: (4, H, W, D)
+            prob_output_path = os.path.join(
+                output_dir, f"simple_avg_softmax_{patient_id}.nii.gz"
+            )
+            save_segmentation_as_nifti(probs, reference_image_path, prob_output_path)
+
             torch.cuda.empty_cache()
 
     csv_path = os.path.join(output_dir, "simple_avg_patient_metrics.csv")
@@ -379,6 +386,6 @@ def ensemble_segmentation(
 #######################
 
 if __name__ == "__main__":
-    patient_id = "00332"
+    patient_id = "01502"
     models_dict = load_all_models()
     ensemble_segmentation(config.test_loader, models_dict)
