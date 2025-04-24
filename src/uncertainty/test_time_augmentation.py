@@ -4,6 +4,8 @@ import torch
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
+from monai.data.meta_tensor import MetaTensor
+from copy import deepcopy
 
 
 class ReversibleScaleIntensityd:
@@ -12,7 +14,6 @@ class ReversibleScaleIntensityd:
         self.factor = factor
 
     def __call__(self, data):
-        # Multiply by (1 + factor)
         data["image"] = data["image"] * (1 + self.factor)
         return data
 
@@ -23,7 +24,6 @@ class InverseReversibleScaleIntensityd:
         self.factor = factor
 
     def __call__(self, data):
-        # Divide by (1 + factor) to reverse the scaling
         data["image"] = data["image"] / (1 + self.factor)
         return data
 
@@ -53,105 +53,67 @@ def get_augmentations():
             "aug": transforms.ShiftIntensityd(keys="image", offset=0.1),
             "inverse": transforms.ShiftIntensityd(keys="image", offset=-0.1),
         },
-        {
-            "aug": transforms.RotateD(keys=["image"], angle=10, keep_size=True),
-            "inverse": transforms.RotateD(keys=["image"], angle=-10, keep_size=True),
-        },
-        {
-            "aug": transforms.RotateD(keys=["image"], angle=-10, keep_size=True),
-            "inverse": transforms.RotateD(keys=["image"], angle=10, keep_size=True),
-        },
     ]
     return augmentations
 
 
-def apply_augmentation(image, aug, visualize=False):
-    """
-    Apply a single augmentation from the list.
-    Args:
-        image: Input image tensor (B, C, D, H, W).
-        aug: The augmentation function to apply.
-        visualize: Whether to visualize the original and augmented slices.
-    Returns:
-        Augmented image tensor.
-    """
-    data = {"image": image[0]}  # Use the first batch element
-    augmented_data = aug(data)
-    augmented_image = augmented_data["image"].unsqueeze(0)  # Add batch dimension back
-
-    if visualize:
-        slice_idx = image.shape[2] // 2  # Choose middle slice
-        original_slice = image[0, 0, slice_idx].cpu().numpy()
-        augmented_slice = augmented_image[0, 0, slice_idx].cpu().numpy()
-        visualize_augmentation(original_slice, augmented_slice, slice_idx)
-
-    return augmented_image
+def apply_augmentation(image, aug):
+    # image is a tensor: (1, C, D, H, W)
+    meta_image = MetaTensor(image[0].clone(), meta={"spatial_shape": image[0].shape[1:]})
+    data = {"image": meta_image}
+    augmented_data = deepcopy(aug)(data)  # clone the transform to avoid metadata overwrite
+    augmented_image = augmented_data["image"].unsqueeze(0)  # Add batch dim back
+    return augmented_image, meta_image.meta  # return metadata too
 
 
-def reverse_augmentation(output, inverse_aug):
+def reverse_augmentation(output, inverse_aug, original_meta):
     """
     Reverse the augmentation applied to the output.
-    Args:
-        output: Predicted segmentation or output from the model.
-        inverse_aug: Inverse augmentation function.
-    Returns:
-        Reversed output.
     """
-    data = {"image": torch.tensor(output[0])}  # First batch element
-    reversed_data = inverse_aug(data)
-    reversed_output = reversed_data["image"].unsqueeze(0).numpy()  # Add batch dimension
+    output_tensor = MetaTensor(torch.tensor(output[0]), meta=original_meta)
+    data = {"image": output_tensor}
+    reversed_data = deepcopy(inverse_aug)(data)
+    reversed_output = reversed_data["image"].unsqueeze(0).numpy()
     return reversed_output
 
 
 def tta_variance(model_inferer, input_data, device, n_iterations=10, on_step=None):
     """
     Run test-time augmentation with reversible transformations for uncertainty estimation.
-    Args:
-        model_inferer: Inference function (e.g., sliding window inference).
-        input_data: Input image tensor (e.g., MRI scan).
-        device: Device to run the model on (CPU or GPU).
-        n_iterations: Number of times to run inference with augmentations.
-    Returns:
-        mean_output: Averaged prediction over all iterations.
-        variance_output: Variance of predictions across iterations.
     """
-    augmentations = get_augmentations()  # Get list of augmentations with inverses
+    augmentations = get_augmentations()
     augmented_outputs = []
 
     with torch.no_grad(), torch.amp.autocast('cuda'):
         for i in tqdm(range(n_iterations), desc="Predicting with TTA.."):
-            # update progress
             if on_step:
-                on_step(i+1, n_iterations)
+                on_step(i + 1, n_iterations)
 
-            # Randomly pick an augmentation
             aug_entry = np.random.choice(augmentations)
             aug = aug_entry["aug"]
             inverse_aug = aug_entry["inverse"]
 
             # Apply augmentation
-            augmented_input = apply_augmentation(input_data, aug).to(device)
+            augmented_input, meta = apply_augmentation(input_data, aug)
+            augmented_input = augmented_input.to(device)
 
             # Forward pass
             pred = model_inferer(augmented_input)
             output = pred.cpu().numpy()
 
             # Reverse augmentation
-            reversed_output = reverse_augmentation(output, inverse_aug)
+            reversed_output = reverse_augmentation(output, inverse_aug, meta)
             augmented_outputs.append(reversed_output)
 
-    # Convert predictions to NumPy array
     augmented_outputs = np.array(augmented_outputs)
-
-    # Compute mean and variance across augmentations
     mean_output = np.mean(augmented_outputs, axis=0)
 
-    # Compute variance on the softmax outputs, converting back to NumPy array
     all_outputs_tensor = torch.from_numpy(augmented_outputs).float()
     softmax_outputs = torch.nn.functional.softmax(all_outputs_tensor, dim=0)
     variance_output = np.var(softmax_outputs.cpu().numpy(), axis=0)
 
     return mean_output, variance_output
+
 
 
 def tta_entropy(model_inferer, input_data, device, n_iterations=10):
