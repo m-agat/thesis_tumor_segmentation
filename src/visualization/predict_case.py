@@ -10,7 +10,7 @@ from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
 from monai.metrics import DiceMetric
 from monai.utils.enums import MetricReduction
 from scipy.ndimage import center_of_mass
-
+import pandas as pd
 sys.path.append("../")
 import models.models as models
 import config.config as config
@@ -221,26 +221,26 @@ def ensemble_segmentation(test_loader, models_dict, patient_id=None, output_dir=
             logits = inferer(image).squeeze(0)
             seg = torch.nn.functional.softmax(logits, dim=0).argmax(dim=0).unsqueeze(0)
 
-            pred_one_hot = [(seg == i).float() for i in range(0, 4)]
-            if gt.shape[1] == 4:
-                # Ground truth is already one-hot encoded (assume channel 0 is background).
-                # Extract channels 1,2,3 and permute to have shape [3, 1, H, W, D].
-                gt_one_hot = gt.permute(1, 0, 2, 3, 4)
-            else:
-                # Ground truth is not one-hot encoded, so create one-hot encoding.
-                gt_one_hot = [(gt == i).float() for i in range(0, 4)]
-                gt_one_hot = torch.stack(gt_one_hot)
+            # pred_one_hot = [(seg == i).float() for i in range(0, 4)]
+            # if gt.shape[1] == 4:
+            #     # Ground truth is already one-hot encoded (assume channel 0 is background).
+            #     # Extract channels 1,2,3 and permute to have shape [3, 1, H, W, D].
+            #     gt_one_hot = gt.permute(1, 0, 2, 3, 4)
+            # else:
+            #     # Ground truth is not one-hot encoded, so create one-hot encoding.
+            #     gt_one_hot = [(gt == i).float() for i in range(0, 4)]
+            #     gt_one_hot = torch.stack(gt_one_hot)
 
-            # Get performance metrics
-            dice, hd95, sensitivity, specificity = compute_metrics(
-                pred_one_hot, gt_one_hot
-            )
-            print(
-                f"Dice BG: {dice[0].item():.4f}, Dice NCR: {dice[1].item():.4f}, Dice ED: {dice[2].item():.4f}, Dice ET: {dice[3].item():.4f}\n"
-                f"HD95 BG: {hd95[0].item():.2f}, HD95 NCR: {hd95[1].item():.2f}, HD95 ED: {hd95[2].item():.2f}, HD95 ET: {hd95[3].item():.2f}\n"
-                f"Sensitivity BG: {sensitivity[0].item():.4f}, NCR: {sensitivity[1].item():.4f}, ED: {sensitivity[2].item():.4f}, ET: {sensitivity[3].item():.4f}\n"
-                f"Specificity BG: {specificity[0].item():.4f}, NCR: {specificity[1].item():.4f}, ED: {specificity[2].item():.4f}, ET: {specificity[3].item():.4f}\n"
-            )
+            # # Get performance metrics
+            # dice, hd95, sensitivity, specificity = compute_metrics(
+            #     pred_one_hot, gt_one_hot
+            # )
+            # print(
+            #     f"Dice BG: {dice[0].item():.4f}, Dice NCR: {dice[1].item():.4f}, Dice ED: {dice[2].item():.4f}, Dice ET: {dice[3].item():.4f}\n"
+            #     f"HD95 BG: {hd95[0].item():.2f}, HD95 NCR: {hd95[1].item():.2f}, HD95 ED: {hd95[2].item():.2f}, HD95 ET: {hd95[3].item():.2f}\n"
+            #     f"Sensitivity BG: {sensitivity[0].item():.4f}, NCR: {sensitivity[1].item():.4f}, ED: {sensitivity[2].item():.4f}, ET: {sensitivity[3].item():.4f}\n"
+            #     f"Specificity BG: {specificity[0].item():.4f}, NCR: {specificity[1].item():.4f}, ED: {specificity[2].item():.4f}, ET: {specificity[3].item():.4f}\n"
+            # )
 
             seg = seg.squeeze(0)
 
@@ -248,7 +248,7 @@ def ensemble_segmentation(test_loader, models_dict, patient_id=None, output_dir=
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
             torch.cuda.empty_cache()
             # Process only one patient for this example.
-            break
+            # break
 
 
 if __name__ == "__main__":
@@ -274,14 +274,14 @@ if __name__ == "__main__":
     output_dir = os.path.join("../models/predictions", selected_model)
 
     # Change the patient_id here if necessary.
-    patient_id = "01531"
-    train_loader, _ = dataloaders.get_loaders(
-        batch_size=config.batch_size,
-        json_path=config.json_path,
-        basedir=config.root_dir,
-        fold=None,
-        roi=config.roi,
-        use_final_split=True,
-    )
+    # patient_id = "01531"
+    # train_loader, _ = dataloaders.get_loaders(
+    #     batch_size=config.batch_size,
+    #     json_path=config.json_path,
+    #     basedir=config.root_dir,
+    #     fold=None,
+    #     roi=config.roi,
+    #     use_final_split=True,
+    # )
 
-    ensemble_segmentation(train_loader, models_dict, patient_id=patient_id, output_dir=output_dir, model_name=selected_model)
+    ensemble_segmentation(config.test_loader, models_dict, output_dir=output_dir, model_name=selected_model)

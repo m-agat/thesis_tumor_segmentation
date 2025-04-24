@@ -8,9 +8,10 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 # Define model and paths
-model = "tta"
+model = "vnet"
 gt_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge\RelabeledTrainingData"
-pred_path = f"../ensemble/output_segmentations/{model}"
+# pred_path = f"../ensemble/output_segmentations/{model}"
+pred_path = f"../models/predictions/{model}"
 
 # Find all predicted segmentation files for the model in the prediction directory.
 # This assumes filenames match the pattern: ttd_{patient_id}_pred_seg.nii.gz
@@ -39,6 +40,12 @@ for pid in pred_patient_ids:
         print(f"Prediction segmentation not found for patient {pid}. Skipping.")
         continue
     pred_seg = nib.load(pred_seg_path).get_fdata().astype(np.int32)
+
+    # Check if volumes have the same dimensions
+    if gt_seg.shape != pred_seg.shape:
+        print(f"Warning: Volume dimensions mismatch for patient {pid}")
+        print(f"Ground truth shape: {gt_seg.shape}, Prediction shape: {pred_seg.shape}")
+        continue
 
     # Flatten the 3D volumes to 1D arrays of voxel labels
     y_true = gt_seg.flatten()

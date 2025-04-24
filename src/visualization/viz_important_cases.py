@@ -7,7 +7,7 @@ import matplotlib as mpl
 
 # Cases definition
 unc_better    = "00332"  
-simple_better = "01502"  
+simple_better = "01032"  
 good_case     = "01147"  
 worst_case    = "01483"
 
