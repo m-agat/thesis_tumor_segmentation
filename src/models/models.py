@@ -1,4 +1,13 @@
 from monai.networks.nets import SwinUNETR, SegResNet, VNet, AttentionUnet
+import sys
+import os
+
+# Add the src directory to the Python path
+current_dir = os.path.dirname(os.path.realpath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
 import config.config as config
 
 swinunetr_model = SwinUNETR(
