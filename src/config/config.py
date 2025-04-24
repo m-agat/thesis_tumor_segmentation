@@ -201,13 +201,6 @@ val_every = config.get("val_every", 5)
 num_folds = config.get("num_folds", 5)
 
 # ---------------------------------
-# 6. Data Loaders
-# ---------------------------------
-# Initialize data loaders
-test_loader = dataloaders.load_test_data(json_path, root_dir)
-
-
-# ---------------------------------
 # 7. Helper Functions
 # ---------------------------------
 def create_subset(data_loader, subset_size=10, shuffle=True):

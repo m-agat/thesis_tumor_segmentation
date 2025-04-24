@@ -7,13 +7,13 @@ from scipy.stats import spearmanr
 
 # Base paths for ground truth and predicted outputs
 gt_base_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge\RelabeledTrainingData"
-pred_base_path = "../ensemble/output_segmentations/tta/"
+pred_base_path = "../ensemble/output_segmentations/hybrid_new/"
 
-# List predicted segmentation files (assumed filename pattern: tta_{patient}_pred_seg.nii.gz)
-pred_seg_files = sorted([f for f in os.listdir(pred_base_path) if re.match(r'tta_\d{5}_pred_seg\.nii\.gz', f)])
+# List predicted segmentation files (assumed filename pattern: hybrid_{patient}_pred_seg.nii.gz)
+pred_seg_files = sorted([f for f in os.listdir(pred_base_path) if re.match(r'hybrid_\d{5}_pred_seg\.nii\.gz', f)])
 
-# List probability maps (assumed filename pattern: tta_softmax_{patient}.nii.gz)
-prob_files = sorted([f for f in os.listdir(pred_base_path) if re.match(r'tta_softmax_.*\.nii\.gz', f)])
+# List probability maps (assumed filename pattern: hybrid_softmax_{patient}.nii.gz)
+prob_files = sorted([f for f in os.listdir(pred_base_path) if re.match(r'hybrid_softmax_.*\.nii\.gz', f)])
 
 # List uncertainty files for each sub-region (assumed filenames follow a pattern)
 uncertainty_NCR_files = sorted([f for f in os.listdir(pred_base_path) if re.match(r'uncertainty_NCR.*_fused\.nii\.gz', f)])
@@ -24,7 +24,7 @@ uncertainty_ET_files  = sorted([f for f in os.listdir(pred_base_path) if re.matc
 gt_folders = sorted([f for f in os.listdir(gt_base_path) if os.path.isdir(os.path.join(gt_base_path, f))])
 
 # Extract patient IDs from the predicted segmentation file names
-patient_ids = [re.search(r'tta_(\d{5})_pred_seg', f).group(1) for f in pred_seg_files]
+patient_ids = [re.search(r'hybrid_(\d{5})_pred_seg', f).group(1) for f in pred_seg_files]
 
 # Define sub-regions and their corresponding label values in the segmentation:
 # Adjust the labels as needed (e.g., 1 = NCR, 2 = ED, 3 = ET)
@@ -142,20 +142,20 @@ for region in subregions.keys():
     plt.grid(True)
     plt.show()
 
-    # Optionally, visualize histograms (using log-scale for error histogram)
-    plt.figure(figsize=(8, 4))
-    plt.hist(uncertainty_all, bins=50, alpha=0.7, label="Uncertainty")
-    plt.xlabel("Uncertainty")
-    plt.ylabel("Voxel Count")
-    plt.title(f"Histogram of Uncertainty for {region}")
-    plt.legend()
-    plt.show()
+    # # Optionally, visualize histograms (using log-scale for error histogram)
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(uncertainty_all, bins=50, alpha=0.7, label="Uncertainty")
+    # plt.xlabel("Uncertainty")
+    # plt.ylabel("Voxel Count")
+    # plt.title(f"Histogram of Uncertainty for {region}")
+    # plt.legend()
+    # plt.show()
 
-    plt.figure(figsize=(8, 4))
-    plt.hist(error_all, bins=50, alpha=0.7, label="Error (NLL)", color='orange')
-    plt.xlabel("Error (NLL)")
-    plt.ylabel("Voxel Count")
-    plt.title(f"Histogram of Error for {region} (log scale)", fontsize=10)
-    plt.xscale('log')
-    plt.legend()
-    plt.show()
+    # plt.figure(figsize=(8, 4))
+    # plt.hist(error_all, bins=50, alpha=0.7, label="Error (NLL)", color='orange')
+    # plt.xlabel("Error (NLL)")
+    # plt.ylabel("Voxel Count")
+    # plt.title(f"Histogram of Error for {region} (log scale)", fontsize=10)
+    # plt.xscale('log')
+    # plt.legend()
+    # plt.show()

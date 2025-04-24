@@ -46,6 +46,7 @@ def choose_test(data, group_col, metric, normality):
     """
     If all groups are normally distributed (p > 0.05), perform one-way ANOVA.
     Otherwise, perform the Kruskal-Wallis test.
+    Returns the test name, statistic, and p-value.
     """
     groups = data[group_col].unique()
     samples = [data.loc[data[group_col] == group, metric].dropna() for group in groups]
@@ -67,7 +68,7 @@ def posthoc_test(data, group_col, metric, test_type):
     Perform post-hoc pairwise comparisons based on the overall test type.
     For ANOVA, use Tukey's HSD.
     For non-parametric, use pairwise Mann-Whitney U tests with Bonferroni correction.
-    Returns a list of significant comparisons with their p-values.
+    Returns a list of significant comparisons with their p-values, statistics, and directional information.
     """
     groups = data[group_col].unique()
     significant_comparisons = []
@@ -77,10 +78,17 @@ def posthoc_test(data, group_col, metric, test_type):
         results = tukey.summary().data[1:]  # Skip header row
         for row in results:
             if float(row[4]) < 0.05:  # p-value column
+                group1_mean = data.loc[data[group_col] == row[0], metric].mean()
+                group2_mean = data.loc[data[group_col] == row[1], metric].mean()
+                direction = ">" if group1_mean > group2_mean else "<"
                 significant_comparisons.append({
                     'group1': row[0],
                     'group2': row[1],
-                    'p_value': float(row[4])
+                    'p_value': float(row[4]),
+                    'statistic': float(row[3]),  # Tukey's HSD statistic
+                    'direction': direction,
+                    'group1_value': group1_mean,
+                    'group2_value': group2_mean
                 })
     else:
         comparisons = list(itertools.combinations(groups, 2))
@@ -90,13 +98,27 @@ def posthoc_test(data, group_col, metric, test_type):
             stat, p = stats.mannwhitneyu(sample1, sample2, alternative='two-sided')
             p_corrected = min(p * len(comparisons), 1.0)  # Bonferroni correction
             if p_corrected < 0.05:
+                group1_median = sample1.median()
+                group2_median = sample2.median()
+                direction = ">" if group1_median > group2_median else "<"
                 significant_comparisons.append({
                     'group1': g1,
                     'group2': g2,
-                    'p_value': p_corrected
+                    'p_value': p_corrected,
+                    'statistic': stat,  # Mann-Whitney U statistic
+                    'direction': direction,
+                    'group1_value': group1_median,
+                    'group2_value': group2_median
                 })
     
     return significant_comparisons
+
+def is_ensemble_model(model_name):
+    """
+    Returns True if the model name indicates it's an ensemble method.
+    """
+    ensemble_indicators = ['Simple-Avg', 'Performance-Weighted', 'TTD', 'Hybrid', 'TTA']
+    return any(indicator in model_name for indicator in ensemble_indicators)
 
 def main(csvs, models, output_file):
     # Convert comma-separated arguments into lists
@@ -132,20 +154,34 @@ def main(csvs, models, output_file):
             print(f"Significant overall difference found for {metric} (p = {overall_p:.4f})")
             posthoc_comparisons = posthoc_test(data, "Model", metric, test_type)
             
-            # Add significant results to the list
+            # Add significant results to the list, but only for ensemble vs individual model comparisons
             for comp in posthoc_comparisons:
-                significant_results.append({
-                    'metric': metric,
-                    'test_type': test_type,
-                    'overall_p_value': overall_p,
-                    'group1': comp['group1'],
-                    'group2': comp['group2'],
-                    'posthoc_p_value': comp['p_value']
-                })
+                group1_is_ensemble = is_ensemble_model(comp['group1'])
+                group2_is_ensemble = is_ensemble_model(comp['group2'])
+                
+                # Only keep comparisons where one group is an ensemble and the other is not
+                if (group1_is_ensemble and not group2_is_ensemble) or (not group1_is_ensemble and group2_is_ensemble):
+                    significant_results.append({
+                        'metric': metric,
+                        'test_type': test_type,
+                        'overall_statistic': overall_stat,
+                        'overall_p_value': overall_p,
+                        'group1': comp['group1'],
+                        'group2': comp['group2'],
+                        'posthoc_statistic': comp['statistic'],
+                        'posthoc_p_value': comp['p_value'],
+                        'direction': comp['direction'],
+                        'group1_value': comp['group1_value'],
+                        'group2_value': comp['group2_value']
+                    })
     
     # Save significant results to CSV
     if significant_results:
         results_df = pd.DataFrame(significant_results)
+        # Format the direction column to show the relationship
+        results_df['relationship'] = results_df.apply(
+            lambda x: f"{x['group1']} {x['direction']} {x['group2']}", axis=1
+        )
         results_df.to_csv(output_file, index=False)
         print(f"\nSaved {len(significant_results)} significant results to {output_file}")
     else:
@@ -168,6 +204,6 @@ if __name__ == "__main__":
 
 # python compare_models.py --csvs "../models/performance/vnet/patient_metrics_test.csv,../models/performance/segresnet/patient_metrics_test.csv,../models/performance/attunet/patient_metrics_test.csv,../models/performance/swinunetr/patient_metrics_test.csv" --models "VNet,SegResNet,AttUNet,SwinUNETR" --output "significant_results.csv"
 
-# python compare_models.py --csvs "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv,../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv, ../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv,../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv, ../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv" --models "Simple Avg,Performance Weighted,TTD,Hybrid,TTA" --output "significant_results.csv"
+# python compare_models.py --csvs "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv,../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv, ../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv,../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv, ../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv, ../models/performance/segresnet/patient_metrics_test_segresnet.csv, ../models/performance/attunet/patient_metrics_test_attunet.csv, ../models/performance/swinunetr/patient_metrics_test_swinunetr.csv" --models "Simple-Avg,Performance-Weighted,TTD,Hybrid,TTA,SegResNet,AttUNet,SwinUNETR" --output "significant_results_all_models.csv"
 
 # python compare_models.py --csvs "../models/performance/segresnet/patient_metrics_test_segresnet.csv,../models/performance/attunet/patient_metrics_test_attunet.csv,../models/performance/swinunetr/patient_metrics_test_swinunetr.csv,../ensemble/output_segmentations/hybrid_new/hybrid_patient_metrics_test.csv" --models "SegResNet,Attention UNet,SwinUNETR,Hybrid" --output "significant_results.csv"

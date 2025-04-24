@@ -51,14 +51,14 @@ def compute_bin_stats(confidences, correctness, num_bins=10):
 def main():
     # Base directories for ground truth and predictions:
     gt_base_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge\RelabeledTrainingData"
-    pred_base_path = "../ensemble/output_segmentations/ttd/"
+    pred_base_path = "../ensemble/output_segmentations/hybrid_new/"
 
     # List probability images. 
     # We assume filename pattern "ttd_softmax_{patientID}.nii.gz" where the probability map has shape (C, H, W, D)
-    prob_images = sorted([f for f in os.listdir(pred_base_path) if re.match(r'ttd_softmax_.*\.nii\.gz', f)])
+    prob_images = sorted([f for f in os.listdir(pred_base_path) if re.match(r'hybrid_softmax_.*\.nii\.gz', f)])
     
     # Extract patient IDs from the probability filenames (assumes patient ID is 5 digits)
-    pred_patient_ids = [re.search(r'ttd_softmax_(\d{5})\.nii\.gz', f).group(1) for f in prob_images]
+    pred_patient_ids = [re.search(r'hybrid_softmax_(\d{5})\.nii\.gz', f).group(1) for f in prob_images]
     
     # Filter ground truth images (assuming they are in folders or filenames that contain the patient IDs)
     # Here we assume that each ground truth is stored in a subfolder named after the patient (adjust as needed)
@@ -143,7 +143,7 @@ def main():
                 ax.text(bin_centers[i], avg_acc[i], f'{int(bin_counts[i])}', ha='center', va='bottom', fontsize=8)
 
     plt.tight_layout()
-    plt.savefig("reliability_diagrams_subregions.png")
+    plt.savefig("reliability_diagrams_subregions_hybrid.png")
     plt.show()
 
 if __name__ == "__main__":

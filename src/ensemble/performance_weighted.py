@@ -132,6 +132,16 @@ def save_segmentation_as_nifti(
 
     print(f"Segmentation saved to {output_path}")
 
+def save_probability_map_as_nifti(prob_map, ref_img, output_path):
+    if isinstance(prob_map, torch.Tensor):
+        prob_map = prob_map.cpu().numpy()
+    prob_map = prob_map.astype(np.float32)
+    hdr = ref_img.header.copy()
+    hdr.set_data_dtype(np.float32)
+    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=hdr)
+    nib.save(prob_img, output_path)
+    print(f"Probability map saved to {output_path}")
+
 
 ########################################
 #### Gather performance metrics ########
@@ -312,6 +322,7 @@ def ensemble_segmentation(
     composite_score_weights,
     patient_id=None,
     output_dir="./output_segmentations/perf_weight",
+    ood=False
 ):
     """
     Perform segmentation using an ensemble of multiple models with simple averaging.
@@ -353,7 +364,11 @@ def ensemble_segmentation(
         for batch_data in test_data_loader:
             image = batch_data["image"].to(config.device)
             reference_image_path = batch_data["path"][0]
-            patient_id = extract_patient_id(reference_image_path)
+            if ood:
+                patient_id = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(test_loader.dataset[0]["path"]))))
+            else:
+                patient_id = extract_patient_id(reference_image_path)
+
             gt = batch_data["label"].to(
                 config.device
             )  # shape: (batch_size, 240, 240, 155)
@@ -433,6 +448,13 @@ def ensemble_segmentation(
             )
             save_segmentation_as_nifti(seg, reference_image_path, output_path)
 
+            # Save probability maps
+            probs = torch.softmax(fused_logits, dim=0)  # Shape: (4, H, W, D)
+            prob_output_path = os.path.join(
+                output_dir, f"perf_weight_softmax_{patient_id}.nii.gz"
+            )
+            save_probability_map_as_nifti(probs, reference_image_path, prob_output_path)
+
             start_time = time.time()
             torch.cuda.empty_cache()
 
@@ -470,7 +492,7 @@ def visualize_segmentation(segmentation, patient_id):
 #######################
 
 if __name__ == "__main__":
-    patient_id = "00332"
+    patient_id = "01502"
     models_dict = load_all_models()
     composite_score_weights = {
         "Dice": 0.45,
@@ -478,4 +500,4 @@ if __name__ == "__main__":
         "Sensitivity": 0.3,
         "Specificity": 0.1,
     }
-    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights, patient_id=patient_id)
+    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights)

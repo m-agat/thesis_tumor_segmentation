@@ -7,7 +7,11 @@ import nibabel as nib
 import pandas as pd
 from functools import partial
 from monai.inferers import sliding_window_inference
+from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric, DiceMetric
+from monai.utils.enums import MetricReduction
+from scipy.ndimage import center_of_mass
 from torch.amp import autocast
+from torch.utils.data import Subset
 # project imports
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -106,13 +110,11 @@ def calibrate_temperature(fused_logits_list, labels_list):
 def run_fusion(img, models_dict, perf_weights, n_iter):
     preds = {}
     for name, (model, inferer) in models_dict.items():
-        ttd_m_np, ttd_u_np = ttd_variance(model, inferer, img, DEVICE, n_iterations=n_iter)
         tta_m_np, tta_u_np = tta_variance(inferer, img, DEVICE, n_iterations=n_iter)
-        ttd_m = torch.as_tensor(ttd_m_np, device=DEVICE).squeeze(0)
-        ttd_u = torch.as_tensor(ttd_u_np, device=DEVICE).squeeze(0)
+        tta_m = torch.as_tensor(tta_m_np, device=DEVICE).squeeze(0)
         tta_u = torch.as_tensor(tta_u_np, device=DEVICE).squeeze(0)
-        inv_map = 1.0/(ttd_u + 1e-6) * 1.0/(tta_u + 1e-6)
-        preds[name] = ttd_m * inv_map
+        inv_map = 1.0/(tta_u + 1e-6)
+        preds[name] = tta_m * inv_map
     fused_logits = None
     for name, pred in preds.items():
         w_log = torch.stack([pred[i] * perf_weights[REGIONS[i]][name] for i in range(len(REGIONS))])
@@ -158,4 +160,4 @@ if __name__ == "__main__":
                                             fold=None,
                                             roi=config.roi,
                                             use_final_split=True)
-    T_opt = ensemble_calibrate(val_loader, models_dict, weights, n_calib=2, n_iter=1)
+    T_opt = ensemble_calibrate(val_loader, models_dict, weights, n_calib=1, n_iter=10)
