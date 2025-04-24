@@ -1,530 +1,293 @@
 import os
-import sys
+import re
+import json
 import torch
 import numpy as np
 import nibabel as nib
-import matplotlib.pyplot as plt
+import pandas as pd
 from functools import partial
 from monai.inferers import sliding_window_inference
-from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
-from monai.metrics import DiceMetric
+from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric, DiceMetric
 from monai.utils.enums import MetricReduction
 from scipy.ndimage import center_of_mass
-import time
-import pandas as pd
-import json
-import re
-import math
+from torch.amp import autocast
 from torch.utils.data import Subset
-
-# Add custom modules
-sys.path.append("../")
+# project imports
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import models.models as models
 import config.config as config
 from uncertainty.test_time_augmentation import tta_variance
 from uncertainty.test_time_dropout import ttd_variance, minmax_uncertainties
 from dataset import dataloaders
 
-#####################
-#### Load Models ####
-#####################
+# constants
+REGIONS = ["BG", "NCR", "ED", "ET"]
+DEVICE = config.device
+ROI = config.roi
+SW_BATCH = config.sw_batch_size
+OVERLAP = config.infer_overlap
 
-def load_model(model_class, checkpoint_path, device):
-    """
-    Load a segmentation model from a checkpoint.
-    """
-    model = model_class
+# ----- Model Loading -----
+def load_model(model_class, checkpoint_path):
+    model = model_class.to(DEVICE)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     model.load_state_dict(checkpoint["state_dict"])
-    model.to(device)
     model.eval()
-
-    return model, partial(
+    inferer = partial(
         sliding_window_inference,
-        roi_size=config.roi,
-        sw_batch_size=config.sw_batch_size,
+        roi_size=ROI,
+        sw_batch_size=SW_BATCH,
         predictor=model,
-        overlap=config.infer_overlap,
-        mode="gaussian",    # <--- ensures patch edges blend smoothly
-        sigma_scale=0.125,  # <--- default smoothing parameter
+        overlap=OVERLAP,
+        mode="gaussian",
+        sigma_scale=0.125,
         padding_mode="constant",
     )
+    return model, inferer
+
 
 def load_all_models():
-    """
-    Load all segmentation models into a dictionary.
-    """
     return {
-        "swinunetr": load_model(
-            models.swinunetr_model, config.model_paths["swinunetr"], config.device
-        ),
-        "segresnet": load_model(
-            models.segresnet_model, config.model_paths["segresnet"], config.device
-        ),
-        "attunet": load_model(
-            models.attunet_model, config.model_paths["attunet"], config.device
-        )
+        name: load_model(cfg_model, cfg_path)
+        for name, (cfg_model, cfg_path) in {
+            'swinunetr': (models.swinunetr_model, config.model_paths['swinunetr']),
+            'segresnet': (models.segresnet_model, config.model_paths['segresnet']),
+            'attunet':    (models.attunet_model,   config.model_paths['attunet']),
+        }.items()
     }
 
-#####################
-#### Load Weights ####
-#####################
+# ----- Weights & Scoring -----
+def load_weights(path):
+    with open(path) as f:
+        return json.load(f)
 
-def load_weights(performance_weights_path):
-    with open(performance_weights_path) as f:
-        performance = json.load(f)
-    return performance
 
-##############################
-#### Compute Weighted Scores ##
-##############################
+def compute_composite_scores(metrics, wts):
+    scores = {}
+    # background
+    hd_bg = 1.0 / (1.0 + metrics['HD95 BG'])
+    scores['BG'] = (wts['Dice'] * metrics['Dice BG'] +
+                    wts['HD95'] * hd_bg +
+                    wts['Sensitivity'] * metrics['Sensitivity BG'] +
+                    wts['Specificity'] * metrics['Specificity BG'])
+    # tumor regions
+    for r in REGIONS[1:]:
+        hd = 1.0 / (1.0 + metrics[f'HD95 {r}'])
+        scores[r] = (wts['Dice'] * metrics[f'Dice {r}'] +
+                     wts['HD95'] * hd +
+                     wts['Sensitivity'] * metrics[f'Sensitivity {r}'] +
+                     wts['Specificity'] * metrics[f'Specificity {r}'])
+    return scores
 
-def compute_composite_scores(metrics, weights):
-    """Compute weighted composite scores for a model.
-    Now includes a score for the background (BG) class.
-    """
-    composite_scores = {}
-    # Background composite score
-    normalized_hd95_bg = 1 / (1 + metrics["HD95 BG"])
-    composite_scores["BG"] = (
-        weights["Dice"] * metrics["Dice BG"]
-        + weights["HD95"] * normalized_hd95_bg
-        + weights["Sensitivity"] * metrics["Sensitivity BG"]
-        + weights["Specificity"] * metrics["Specificity BG"]
-    )
-    # Tumor regions composite scores
-    for region in ["NCR", "ED", "ET"]:
-        normalized_hd95 = 1 / (1 + metrics[f"HD95 {region}"])
-        composite_scores[region] = (
-            weights["Dice"] * metrics[f"Dice {region}"]
-            + weights["HD95"] * normalized_hd95
-            + weights["Sensitivity"] * metrics[f"Sensitivity {region}"]
-            + weights["Specificity"] * metrics[f"Specificity {region}"]
-        )
-    return composite_scores
+# ----- I/O Helpers -----
+def save_nifti(arr, ref_path, out_path, out_dtype=np.uint8):
+    if isinstance(arr, torch.Tensor):
+        arr = arr.detach().cpu().numpy()
+    arr = arr.astype(out_dtype)
+    ref = nib.load(ref_path)
+    nib.save(nib.Nifti1Image(arr, ref.affine, ref.header), out_path)
+    print(f"Saved: {out_path}")
 
-#############################
-#### Save Segmentation ######
-#############################
-
-def save_segmentation_as_nifti(predicted_segmentation, reference_image_path, output_path):
-    """
-    Save the predicted segmentation as a NIfTI file.
-    """
-    if isinstance(predicted_segmentation, torch.Tensor):
-        predicted_segmentation = predicted_segmentation.cpu().numpy()
-    predicted_segmentation = predicted_segmentation.astype(np.uint8)
-    ref_img = nib.load(reference_image_path)
-    seg_img = nib.Nifti1Image(predicted_segmentation, affine=ref_img.affine, header=ref_img.header)
-    nib.save(seg_img, output_path)
-    print(f"Segmentation saved to {output_path}")
-
-def save_probability_map_as_nifti(prob_map, ref_img, output_path):
-    """
-    Save a probability map (float32) as a NIfTI file.
-    """
-    if isinstance(prob_map, torch.Tensor):
-        prob_map = prob_map.cpu().numpy()
-    prob_map = prob_map.astype(np.float32)
-    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=ref_img.header)
-    nib.save(prob_img, output_path)
-    print(f"Probability map saved to {output_path}")
-
-########################################
-#### Gather performance metrics ########
-########################################
-
-def compute_metrics(pred, gt):
+# ----- Metrics Computation -----
+def compute_metrics(pred_list, gt_list):
     """
     Compute Dice, HD95, Sensitivity, and Specificity for segmentation predictions.
+    pred_list, gt_list: lists of length C, each tensor [H,W,D]
     """
-    dice_metric = DiceMetric(include_background=False, reduction=MetricReduction.NONE, get_not_nans=True)
-    confusion_metric = ConfusionMatrixMetric(
-        include_background=False,
-        metric_name=["sensitivity", "specificity"],
-        reduction="none",
-        compute_sample=False,
+    # Prepare batch-channel tensors
+    y_pred = torch.stack([torch.as_tensor(p) for p in pred_list], dim=0).unsqueeze(0)
+    y_gt   = torch.stack([torch.as_tensor(g) for g in gt_list],   dim=0).unsqueeze(0)
+
+    # Dice (including background)
+    dice_metric = DiceMetric(
+        include_background=True,
+        reduction=MetricReduction.NONE,
+        get_not_nans=True,
     )
-    pred = [p.detach().clone() if hasattr(p, "detach") else p for p in pred]
-    gt = [g.detach().clone() if hasattr(g, "detach") else g for g in gt]
-    pred_stack = torch.stack(pred)
-    gt_stack = torch.stack(gt)
-    dice_metric(y_pred=pred, y=gt)
+    dice_metric(y_pred=y_pred, y=y_gt)
     dice_scores, not_nans = dice_metric.aggregate()
-    dice_scores = dice_scores.cpu().numpy()
-    for i, dice_score in enumerate(dice_scores):
-        if not_nans[i] == 0:  # Tissue is absent in ground truth
-            pred_empty = torch.sum(pred_stack[i]).item() == 0
-            dice_scores[i] = 1.0 if pred_empty else 0.0
-    hd95 = compute_hausdorff_distance(
-        y_pred=pred_stack,
-        y=gt_stack,
-        include_background=False,
-        distance_metric="euclidean",
-        percentile=95,
-    )
-    hd95 = hd95.squeeze(0).cpu().numpy()
-    for i in range(len(hd95)):
-        pred_empty = torch.sum(pred[i]).item() == 0
-        gt_empty = not_nans[i] == 0
+    dice_scores = dice_scores.squeeze(0).cpu().numpy()  # shape: (C,)
+    not_nans     = not_nans.squeeze(0).cpu().numpy()    # shape: (C,)
+
+    # Correct Dice when GT empty
+    for i in range(len(dice_scores)):
+        if not_nans[i] == 0:
+            dice_scores[i] = 1.0 if pred_list[i].sum().item() == 0 else 0.0
+
+    hd95 = np.zeros(len(dice_scores), dtype=float)
+    for i in range(len(pred_list)):
+        # prepare single-channel batch as [1,1,H,W,D]
+        pred_ch = pred_list[i].unsqueeze(0).unsqueeze(0)
+        gt_ch   = gt_list[i].unsqueeze(0).unsqueeze(0)
+        pred_empty = torch.sum(pred_ch).item() == 0
+        gt_empty   = not_nans[i] == 0
         if pred_empty and gt_empty:
-            print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
+            # both empty
             hd95[i] = 0.0
         elif gt_empty and not pred_empty:
-            pred_array = pred[i].cpu().numpy()
-            if np.sum(pred_array) > 0:
+            # GT absent, prediction present
+            pred_array = pred_ch.cpu().numpy()[0,0]
+            if pred_array.sum() > 0:
                 com = center_of_mass(pred_array)
-                com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                com_coords = tuple(map(int, map(round, com)))
-                com_mask[com_coords] = 1
-                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[i].unsqueeze(0),
-                    y=com_mask_tensor.unsqueeze(0),
-                    include_background=False,
-                    distance_metric="euclidean",
-                    percentile=95,
-                )
-                print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
-                print(f"Before update, hd95: {hd95}")
-                hd95[i] = mock_val.item()
-                print(f"After update, hd95: {hd95}")
+                if any(np.isnan(com)):
+                    hd95[i] = 0.0
+                else:
+                    com_mask = np.zeros_like(pred_array, dtype=np.uint8)
+                    coords = tuple(map(int, map(round, com)))
+                    com_mask[coords] = 1
+                    mask_tensor = torch.from_numpy(com_mask).unsqueeze(0).unsqueeze(0).to(torch.float32).to(DEVICE)
+                    mock_hd = compute_hausdorff_distance(
+                        y_pred=pred_ch,
+                        y=mask_tensor,
+                        include_background=False,
+                        distance_metric="euclidean",
+                        percentile=95,
+                    )
+                    hd95[i] = float(mock_hd.squeeze().item())
             else:
                 hd95[i] = 0.0
         elif pred_empty and not gt_empty:
-            gt_array = torch.stack(gt)[i].cpu().numpy()
-            if np.sum(gt_array) > 0:
+            # Prediction empty, GT present
+            gt_array = gt_ch.cpu().numpy()[0,0]
+            if gt_array.sum() > 0:
                 com = center_of_mass(gt_array)
-                com_mask = np.zeros_like(gt_array, dtype=np.uint8)
-                com_coords = tuple(map(int, map(round, com)))
-                com_mask[com_coords] = 1
-                com_mask_tensor = torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(gt)[i].unsqueeze(0),
-                    y=com_mask_tensor.unsqueeze(0),
-                    include_background=False,
-                    distance_metric="euclidean",
-                    percentile=95,
-                )
-                print(f"Mock HD95 for region {i} (Prediction absent):", mock_val.item())
-                print(f"Before update, hd95: {hd95}")
-                hd95[i] = mock_val.item()
-                print(f"After update, hd95: {hd95}")
+                if any(np.isnan(com)):
+                    hd95[i] = 0.0
+                else:
+                    com_mask = np.zeros_like(gt_array, dtype=np.uint8)
+                    coords = tuple(map(int, map(round, com)))
+                    com_mask[coords] = 1
+                    mask_tensor = torch.from_numpy(com_mask).unsqueeze(0).unsqueeze(0).to(torch.float32).to(DEVICE)
+                    mock_hd = compute_hausdorff_distance(
+                        y_pred=gt_ch,
+                        y=mask_tensor,
+                        include_background=False,
+                        distance_metric="euclidean",
+                        percentile=95,
+                    )
+                    hd95[i] = float(mock_hd.squeeze().item())
             else:
-                print(f"Warning: GT mask for region {i} is unexpectedly empty.")
                 hd95[i] = 0.0
-    confusion_metric(y_pred=pred, y=gt)
-    sensitivity, specificity = confusion_metric.aggregate()
-    sensitivity = sensitivity.squeeze(0).cpu().numpy()
-    specificity = specificity.squeeze(0).cpu().numpy()
-    for i in range(len(sensitivity)):
+        else:
+            # both present: direct hd95
+            hd_t = compute_hausdorff_distance(
+                y_pred=pred_ch,
+                y=gt_ch,
+                include_background=False,
+                distance_metric="euclidean",
+                percentile=95,
+            )
+            hd95[i] = float(hd_t.squeeze().item())
+
+    # Sensitivity / Specificity
+    conf_metric = ConfusionMatrixMetric(
+        include_background=True,
+        metric_name=["sensitivity","specificity"],
+        reduction="none",
+    )
+    conf_metric(y_pred=y_pred, y=y_gt)
+    sens, spec = conf_metric.aggregate()
+    sens = sens.squeeze(0).cpu().numpy()
+    spec = spec.squeeze(0).cpu().numpy()
+
+    # Correct sens/spec when GT empty
+    for i in range(len(sens)):
         if not_nans[i] == 0:
-            pred_empty = torch.sum(pred_stack[i]).item() == 0
-            sensitivity[i] = 1.0 if pred_empty else 0.0
-            specificity[i] = 1.0
-    return dice_scores, hd95, sensitivity, specificity
+            sens[i] = 1.0 if pred_list[i].sum().item() == 0 else 0.0
+            spec[i] = 1.0
 
-########################################
-#### Perform Ensemble Segmentation ####
-########################################
+    return dice_scores, hd95, sens, spec
 
-def extract_patient_id(path):
-    numbers = re.findall("\d+", path)
-    patient_id = numbers[-1]
-    return patient_id
-
-def save_metrics_csv(metrics_list, filename):
-    df = pd.DataFrame(metrics_list)
-    df.to_csv(filename, index=False)
-    print(f"Saved patient-wise metrics to {filename}")
-
-def save_average_metrics(metrics_list, filename):
-    avg_metrics = {
-        key: float(np.mean([m[key] for m in metrics_list]))
-        for key in metrics_list[0]
-        if key != "patient_id"
-    }
-    with open(filename, "w") as f:
-        json.dump(avg_metrics, f, indent=4)
-    print(f"Saved average test set metrics to {filename}")
-
-def save_uncertainty_as_nifti(uncertainty_map, ref_img, output_path):
-    if isinstance(uncertainty_map, torch.Tensor):
-        uncertainty_map = uncertainty_map.cpu().numpy()
-    uncertainty_map = minmax_uncertainties(uncertainty_map)
-    uncertainty_map = uncertainty_map.astype(np.float32)
-    uncertainty_nifti = nib.Nifti1Image(uncertainty_map, affine=ref_img.affine, header=ref_img.header)
-    nib.save(uncertainty_nifti, output_path)
-    print(f"Uncertainty map saved to {output_path}")
-
-def compute_disagreement_uncertainty(probability_maps, weights=None):
-    probability_maps = np.array(probability_maps)
-    if weights is not None:
-        weights = np.array(weights).reshape(-1, 1, 1, 1, 1)
-        mean_prob = np.sum(weights * probability_maps, axis=0)
-        variance = np.sum(weights * (probability_maps - mean_prob)**2, axis=0)
-    else:
-        mean_prob = np.mean(probability_maps, axis=0)
-        variance = np.var(probability_maps, axis=0)
-    return variance
-
-def compute_hard_label_disagreement(hard_label_maps):
-    """
-    Compute voxel-wise disagreement for a set of binary hard label maps
-    using Shannon entropy.
-    
-    Args:
-        hard_label_maps (list of np.array): A list of binary (0/1) maps of shape (H, W, D)
-            where 1 indicates the presence of the region and 0 its absence.
-    
-    Returns:
-        np.array: A disagreement map of shape (H, W, D) where higher values indicate higher disagreement.
-    """
-    # Convert list to numpy array with shape [N_models, H, W, D]
-    preds = np.array(hard_label_maps)
-    # Compute the fraction of models that predict the region (i.e. vote = 1)
-    p = np.mean(preds, axis=0)  # p has shape (H, W, D) and values between 0 and 1
-    eps = 1e-6  # small constant to avoid log(0)
-    # Compute entropy (uncertainty) at each voxel:
-    # Note: The entropy is maximum when p is 0.5 and zero when p is 0 or 1.
-    disagreement = - (p * np.log(p + eps) + (1 - p) * np.log(1 - p + eps))
-    return disagreement
-
-def ensemble_segmentation(
-    test_loader,
-    models_dict,
-    composite_score_weights,
-    n_iterations=10,
-    patient_id=None,
-    output_dir="./output_segmentations/hybrid_new",
-):
-    """
-    Perform segmentation using an ensemble of multiple models.
-    
-    Modifications:
-      - Instead of computing a hybrid uncertainty (by averaging TTD and TTA),
-        we perform voxel-level weighting using the inverse uncertainties.
-      - The TTD and TTA uncertainties are applied sequentially (first TTD, then TTA)
-        to weight the base prediction (here we use the TTD mean).
-      - The performance weight (computed earlier) is still applied as a scalar.
-      - **New**: Save each model's combined uncertainty (average of TTD and TTA)
-        into a dictionary to allow fusion of uncertainty maps.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    if patient_id is not None:
-        test_data_loader = config.find_patient_by_id(patient_id, test_loader)
-    else:
-        test_data_loader = test_loader
-
-    # Compute performance weights for all classes (BG, NCR, ED, ET)
-    model_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
-    for model_name in models_dict.keys():
-        performance_weights_path = f"../models/performance/{model_name}/average_metrics.json"
-        metrics = load_weights(performance_weights_path)
-        composite_scores = compute_composite_scores(metrics, composite_score_weights)
-        for region in ["BG", "NCR", "ED", "ET"]:
-            model_weights[region][model_name] = composite_scores[region]
-    # Normalize (the normalization here remains scalar per region)
-    for region in ["BG", "NCR", "ED", "ET"]:
-        total_weight = sum(model_weights[region].values())
-        for model_name in model_weights[region]:
-            model_weights[region][model_name] /= total_weight
-    print(f"Computed model performance weights per class: {model_weights}")
+# ----- Ensemble Inference -----
+def ensemble_segmentation(loader, models_dict, wts, n_iter=10, pid=None, out_dir="./output"):
+    os.makedirs(out_dir, exist_ok=True)
+    perf_weights = {r: {} for r in REGIONS}
+    for m in models_dict:
+        metrics = load_weights(f"../models/performance/{m}/average_metrics.json")
+        cs = compute_composite_scores(metrics, wts)
+        for r in REGIONS:
+            perf_weights[r][m] = cs[r]
+    for r in REGIONS:
+        total = sum(perf_weights[r].values())
+        for m in perf_weights[r]:
+            perf_weights[r][m] /= total
 
     patient_metrics = []
-    with torch.no_grad():
-        for batch_data in test_data_loader:
-            image = batch_data["image"].to(config.device)
-            reference_image_path = batch_data["path"][0]
-            ref_img = nib.load(reference_image_path)
-            patient_id = extract_patient_id(reference_image_path)
-            gt = batch_data["label"].to(config.device)
-            print(f"\nProcessing patient: {patient_id}\n")
+    with torch.no_grad(), autocast(device_type='cuda', dtype=torch.float16):
+        data_loader = config.find_patient_by_id(pid, loader) if pid else loader
+        for batch in data_loader:
+            img = batch['image'].to(DEVICE)
+            ref_path = batch['path'][0]
+            gt = batch['label'].to(DEVICE)
+            pid_str = re.findall(r"\d+", ref_path)[-1]
+            print(f"Processing {pid_str}")
+
+            preds, uncs = {}, {}
+            for name, (model, inferer) in models_dict.items():
+                ttd_m_np, ttd_u_np = ttd_variance(model, inferer, img, DEVICE, n_iterations=n_iter)
+                tta_m_np, tta_u_np = tta_variance(inferer, img, DEVICE, n_iterations=n_iter)
+                ttd_m = torch.as_tensor(ttd_m_np, device=DEVICE).squeeze(0)
+                ttd_u = torch.as_tensor(ttd_u_np, device=DEVICE).squeeze(0)
+                tta_u = torch.as_tensor(tta_u_np, device=DEVICE).squeeze(0)
+                inv_map = 1.0/(ttd_u + 1e-6) * 1.0/(tta_u + 1e-6)
+                preds[name] = ttd_m * inv_map
+                uncs[name] = (ttd_u + tta_u) * 0.5
             
-            # Prepare dictionaries to store per-model adjusted (voxel-level weighted) predictions
-            # and model uncertainties.
-            model_predictions = {}
-            model_uncertainties = {}   # NEW: dictionary to save each model's uncertainty
+            fused_logits = None
+            for name, pred in preds.items():
+                w_log  = torch.stack([pred[i] * perf_weights[REGIONS[i]][name] for i in range(len(REGIONS))])
 
-            # STEP 1: For each model, get TTD and TTA uncertainties and predictions,
-            # then compute a voxel-level weighted prediction.
-            for model_name, (model, inferer) in models_dict.items():
-                # Obtain TTD prediction and its uncertainty
-                ttd_mean, ttd_uncertainty = ttd_variance(
-                    model, inferer, image, config.device, n_iterations=n_iterations
-                )
-                # Obtain TTA uncertainty (and tta_mean, though here we use only its uncertainty for weighting)
-                tta_mean, tta_uncertainty = tta_variance(
-                    inferer, image, config.device, n_iterations=n_iterations
-                )
+                fused_logits = w_log  if fused_logits is None else fused_logits +  w_log
 
-                eps = 1e-6  # small constant to avoid division by zero
-                # Compute voxel-level inverse uncertainty maps (used for weighting the prediction)
-                inv_ttd = 1.0 / (ttd_uncertainty + eps)
-                inv_tta = 1.0 / (tta_uncertainty + eps)
+            T_opt = 4.117968559265137
+            probabilities = torch.softmax(fused_logits/T_opt, dim=0)
+            seg = probabilities.argmax(dim=0)
 
-                # Instead of averaging means (hybrid), we use ttd_mean as the base.
-                # Then weight voxel-wise: first multiply by the inverse TTD uncertainty,
-                # then further weight by the inverse TTA uncertainty.
-                adjusted_prediction = ttd_mean * inv_ttd
-                adjusted_prediction = adjusted_prediction * inv_tta
-                # Remove extra dimensions if necessary:
-                adjusted_prediction = np.squeeze(adjusted_prediction)  # expected shape: [num_classes, H, W, D]
+            fused_unc = {}
+            for idx, region in enumerate(REGIONS[1:], start=1):
+                acc = None
+                for name in uncs:
+                    w = perf_weights[region][name]
+                    reg_unc = uncs[name][idx]
+                    acc = reg_unc * w if acc is None else acc + reg_unc * w
+                fused_unc[region] = minmax_uncertainties(acc.cpu().numpy())
 
-                model_predictions[model_name] = adjusted_prediction
-
-                # NEW: Compute a combined uncertainty for the current model.
-                # Here, we simply average the TTD and TTA uncertainties.
-                combined_uncertainty = (ttd_uncertainty + tta_uncertainty) / 2.0
-                # Squeeze if needed to remove unnecessary dimensions.
-                model_uncertainties[model_name] = np.squeeze(combined_uncertainty)
-
-            # STEP 2: Fuse predictions from all models.
-            # Here we still use the scalar performance (composite) weights computed earlier.
-            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
-            for model_name in models_dict.keys():
-                # Convert each model’s adjusted prediction (logits) to a torch tensor.
-                logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
-                for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
-                    # Get the performance weight scalar (previously computed and normalized)
-                    perf_weight = model_weights[region][model_name]
-                    # Multiply each voxel’s logit by the performance weight:
-                    region_logits = logits[idx]
-                    weighted_region_logits = perf_weight * region_logits
-                    weighted_logits[region].append(weighted_region_logits)
-            # Sum the weighted logits across models.
-            fused_bg = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
-            fused_tumor = [torch.sum(torch.stack(weighted_logits[region]), dim=0) for region in ["NCR", "ED", "ET"]]
-            fused_logits = torch.stack([fused_bg] + fused_tumor, dim=0)
-
-            # Convert logits to probability maps and generate segmentation.
-            fused_probs = torch.softmax(fused_logits, dim=0)
-            seg = fused_probs.argmax(dim=0).unsqueeze(0)
-
-            # Prepare one-hot representations.
-            pred_one_hot = [(seg == i).float() for i in range(0, 4)]
-            if gt.shape[1] == 4:
-                gt_one_hot = gt.permute(1, 0, 2, 3, 4)
+            pred_list = [(seg == i).float() for i in range(len(REGIONS))]
+            if gt.shape[1] == len(REGIONS):
+                gt_list = [gt[:, i].squeeze(0) for i in range(len(REGIONS))]
             else:
-                gt_one_hot = [(gt == i).float() for i in range(0, 4)]
-                gt_one_hot = torch.stack(gt_one_hot)
+                gt_list = [(gt == i).float().squeeze(0) for i in range(len(REGIONS))]
 
-            # Compute performance metrics.
-            dice, hd95, sensitivity, specificity = compute_metrics(pred_one_hot, gt_one_hot)
-            print(
-                f"Dice BG: {dice[0].item():.4f}, Dice NCR: {dice[1].item():.4f}, Dice ED: {dice[2].item():.4f}, Dice ET: {dice[3].item():.4f}\n"
-                f"HD95 BG: {hd95[0].item():.2f}, HD95 NCR: {hd95[1].item():.2f}, HD95 ED: {hd95[2].item():.2f}, HD95 ET: {hd95[3].item():.2f}\n"
-                f"Sensitivity BG: {sensitivity[0].item():.4f}, NCR: {sensitivity[1].item():.4f}, ED: {sensitivity[2].item():.4f}, ET: {sensitivity[3].item():.4f}\n"
-                f"Specificity BG: {specificity[0].item():.4f}, NCR: {specificity[1].item():.4f}, ED: {specificity[2].item():.4f}, ET: {specificity[3].item():.4f}\n"
-            )
-            patient_metrics.append(
-                {
-                    "patient_id": patient_id,
-                    "Dice BG": dice[0].item(),
-                    "Dice NCR": dice[1].item(),
-                    "Dice ED": dice[2].item(),
-                    "Dice ET": dice[3].item(),
-                    "Dice overall": float(np.nanmean(dice)),
-                    "HD95 BG": hd95[0].item(),
-                    "HD95 NCR": hd95[1].item(),
-                    "HD95 ED": hd95[2].item(),
-                    "HD95 ET": hd95[3].item(),
-                    "HD95 overall": float(np.nanmean(hd95)),
-                    "Sensitivity BG": sensitivity[0].item(),
-                    "Sensitivity NCR": sensitivity[1].item(),
-                    "Sensitivity ED": sensitivity[2].item(),
-                    "Sensitivity ET": sensitivity[3].item(),
-                    "Sensitivity overall": float(np.nanmean(sensitivity)),
-                    "Specificity BG": specificity[0].item(),
-                    "Specificity NCR": specificity[1].item(),
-                    "Specificity ED": specificity[2].item(),
-                    "Specificity ET": specificity[3].item(),
-                    "Specificity overall": float(np.nanmean(specificity)),
-                }
-            )
+            # Compute performance metrics
+            dice_scores, hd95, sens, spec = compute_metrics(pred_list, gt_list)
+            print("dice_scores", dice_scores)
+            print("hd95", hd95)
+            print("sens", sens)
+            print("spec", spec)
+            patient_metrics.append({
+                'patient_id': pid_str,
+                **{f"Dice {REGIONS[i]}": dice_scores[i] for i in range(len(REGIONS)-1)},
+                **{f"HD95 {REGIONS[i]}": hd95[i] for i in range(len(REGIONS)-1)},
+                **{f"Sensitivity {REGIONS[i]}": sens[i] for i in range(len(REGIONS)-1)},
+                **{f"Specificity {REGIONS[i]}": spec[i] for i in range(len(REGIONS)-1)},
+            })
 
-            adjusted_weights = {region: model_weights[region] for region in ["NCR", "ED", "ET"]}
+            save_nifti(probabilities.cpu(), ref_path, os.path.join(out_dir, f"softmax_{pid_str}.nii.gz"), out_dtype=np.float32)
+            save_nifti(seg.cpu(), ref_path, os.path.join(out_dir, f"seg_{pid_str}.nii.gz"))
+            for region, unc_map in fused_unc.items():
+                save_nifti(unc_map, ref_path, os.path.join(out_dir, f"uncertainty_{region}_{pid_str}.nii.gz"), out_dtype=np.float32)
 
-            # Fuse uncertainty maps for tumor regions using the saved model_uncertainties.
-            fused_uncertainty = {}
-            for idx, region in enumerate(["NCR", "ED", "ET"]):
-                # Use one model's uncertainty shape to create an initial zero tensor.
-                uncertainty_sum = torch.zeros_like(torch.from_numpy(model_uncertainties[next(iter(model_uncertainties))][idx+1]))
-                for model_name in model_uncertainties:
-                    weight = adjusted_weights[region][model_name]
-                    # Here we assume that model_uncertainties[model_name] has shape [num_classes, H, W, D]
-                    # and region indices 1,2,3 correspond to "NCR", "ED", "ET"
-                    uncertainty_sum += weight * torch.from_numpy(model_uncertainties[model_name][idx+1])
-                fused_uncertainty[region] = minmax_uncertainties(uncertainty_sum.cpu().numpy())
-
-            disagreement_uncertainty = {}
-            for idx, region in enumerate(["NCR", "ED", "ET"]):
-                region_prob_maps = []
-                for model_name in models_dict.keys():
-                    logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
-                    region_logits = logits[idx+1]
-                    prob_map = torch.softmax(region_logits, dim=0).cpu().numpy()
-                    region_prob_maps.append(prob_map)
-                disagreement_uncertainty[region] = compute_disagreement_uncertainty(region_prob_maps)
-                
-            disagreement_uncertainty_hl = {}
-            for idx, region in enumerate(["NCR", "ED", "ET"]):
-                hard_label_maps = []
-                for model_name in models_dict.keys():
-                    # Convert model predictions (assumed to be a numpy array) to a tensor
-                    logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
-                    # Compute the hard segmentation mask for the entire image (argmax over channels)
-                    # This results in a tensor of shape [H, W, D] with labels 0 (BG), 1 (NCR), 2 (ED), 3 (ET)
-                    seg = torch.argmax(logits, dim=0)
-                    # For the current region, create a binary mask (1 where the label equals idx+1)
-                    hard_map = (seg == (idx + 1)).cpu().numpy().astype(np.uint8)
-                    hard_label_maps.append(hard_map)
-                # Compute the disagreement map using the helper function defined above
-                disagreement_uncertainty_hl[region] = compute_hard_label_disagreement(hard_label_maps)
-                
-            for region in ["NCR", "ED", "ET"]:
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_fused.nii.gz")
-                save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement.nii.gz")
-                save_uncertainty_as_nifti(disagreement_uncertainty[region], ref_img, output_path)
-                output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}_disagreement_hl.nii.gz")
-                save_uncertainty_as_nifti(disagreement_uncertainty_hl[region], ref_img, output_path)
-
-            output_path = os.path.join(output_dir, f"hybrid_softmax_{patient_id}.nii.gz")
-            save_probability_map_as_nifti(fused_probs, ref_img, output_path)
-
-            output_path = os.path.join(output_dir, f"hybrid_segmentation_{patient_id}.nii.gz")
-            seg = seg.squeeze(0)
-            save_segmentation_as_nifti(seg, reference_image_path, output_path)
-
-            torch.cuda.empty_cache()
-
-    csv_path = os.path.join(output_dir, "hybrid_patient_metrics_test.csv")
-    json_path = os.path.join(output_dir, "hybrid_average_metrics_test.json")
-    save_metrics_csv(patient_metrics, csv_path)
-    save_average_metrics(patient_metrics, json_path)
-
-#######################
-#### Run Inference ####
-#######################
+    df = pd.DataFrame(patient_metrics)
+    df.to_csv(os.path.join(out_dir, "patient_metrics.csv"), index=False)
+    avg = df.drop(columns=['patient_id']).mean().to_dict()
+    with open(os.path.join(out_dir, "average_metrics.json"), 'w') as f:
+        json.dump(avg, f, indent=2)
+    print("Ensemble inference complete.")
 
 if __name__ == "__main__":
-    patient_id = "01556"
     models_dict = load_all_models()
-    # _, val_loader = dataloaders.get_loaders(
-    #     batch_size=config.batch_size,
-    #     json_path=config.json_path,
-    #     basedir=config.root_dir,
-    #     fold=None,
-    #     roi=config.roi,
-    #     use_final_split=True,
-    # )
-    composite_score_weights = {
-        "Dice": 0.45,
-        "HD95": 0.15,
-        "Sensitivity": 0.3,
-        "Specificity": 0.1,
-    }
-    ensemble_segmentation(
-        config.test_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=patient_id
-    )
+    weights = {"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}
+    test_loader = dataloaders.load_test_data(config.json_path, config.root_dir)
+    ensemble_segmentation(test_loader, models_dict, weights,
+                          n_iter=10, pid="01556", out_dir="./output/hybrid")
