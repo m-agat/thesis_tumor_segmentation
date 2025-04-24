@@ -20,6 +20,12 @@ from uncertainty.test_time_augmentation import tta_variance
 from uncertainty.test_time_dropout import ttd_variance, minmax_uncertainties
 from dataset import dataloaders
 
+REGIONS = ["BG", "NCR", "ED", "ET"]
+DEVICE = config.device
+ROI = config.roi
+SW_BATCH = config.sw_batch_size
+OVERLAP = config.infer_overlap
+
 def load_model(model_class, checkpoint_path, device):
     """
     Load a segmentation model from a checkpoint.
@@ -48,7 +54,6 @@ def load_all_models():
         "swinunetr": load_model(models.swinunetr_model, config.model_paths["swinunetr"], config.device),
         "segresnet": load_model(models.segresnet_model, config.model_paths["segresnet"], config.device),
         "attunet": load_model(models.attunet_model, config.model_paths["attunet"], config.device),
-        "vnet": load_model(models.vnet_model, config.model_paths["vnet"], config.device),
     }
 
 def load_weights(performance_weights_path):
@@ -87,14 +92,12 @@ def save_segmentation_as_nifti(predicted_segmentation, ref_img, output_path):
     print(f"Segmentation saved to {output_path}")
 
 def save_probability_map_as_nifti(prob_map, ref_img, output_path):
-    """
-    Save a probability map (float32) as a NIfTI file.
-    """
     if isinstance(prob_map, torch.Tensor):
         prob_map = prob_map.cpu().numpy()
-    # Make sure to keep the float values
     prob_map = prob_map.astype(np.float32)
-    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=ref_img.header)
+    hdr = ref_img.header.copy()
+    hdr.set_data_dtype(np.float32)
+    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=hdr)
     nib.save(prob_img, output_path)
     print(f"Probability map saved to {output_path}")
 
@@ -169,11 +172,25 @@ def compute_model_inference(args, progress_queue):
             n_iterations=n_iterations,
             on_step=make_progress_callback(n_iterations, total_iterations, progress_queue, scale=0.5)
         )
-        hybrid_mean = np.squeeze((ttd_mean + tta_mean) / 2)
-        hybrid_uncertainty = np.squeeze(w_ttd * ttd_uncertainty + w_tta * tta_uncertainty, axis=0)
 
+        eps = 1e-1 # to avoid division by zero
+        # Compute voxel-level inverse uncertainty maps
+        inv_ttd = 1.0 / np.clip(ttd_uncertainty, a_min=eps, a_max=None)
+        inv_tta = 1.0 / np.clip(tta_uncertainty, a_min=eps, a_max=None)
+
+        # Use ttd_mean as base and weight with inverse uncertainties
+        adjusted_prediction = ttd_mean * inv_ttd
+        adjusted_prediction = adjusted_prediction * inv_tta
+        adjusted_prediction = np.squeeze(adjusted_prediction)
+
+        # Compute combined uncertainty for the model
+        combined_uncertainty = (ttd_uncertainty + tta_uncertainty) / 2.0
+        combined_uncertainty = np.squeeze(combined_uncertainty)
+    
     torch.cuda.synchronize()
-    return model_name, hybrid_mean, hybrid_uncertainty
+    pred_t = torch.from_numpy(adjusted_prediction).to(device, torch.float32)
+    unc_t  = torch.from_numpy(combined_uncertainty).to(device, torch.float32)
+    return model_name, pred_t, unc_t
 
 def update_progress_bar(progress_bar, progress_queue, last_progress):
     """Poll the progress queue and update the progress bar only if progress increases."""
@@ -184,36 +201,34 @@ def update_progress_bar(progress_bar, progress_queue, last_progress):
             last_progress[0] = pct
             progress_bar.progress(pct, text=f"{pct}% completed")
 
-def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=None, output_dir="./output_segmentations", progress_bar=None):
+def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=None, output_dir="./assets/segmentations", progress_bar=None):
     os.makedirs(output_dir, exist_ok=True)
     test_data_loader = config.find_patient_by_id(patient_id, test_loader) if patient_id is not None else test_loader
 
-    # Compute performance weights for all classes (BG, NCR, ED, ET)
-    model_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
-    for model_name in models_dict.keys():
-        performance_weights_path = f"../models/performance/{model_name}/average_metrics.json"
-        metrics = load_weights(performance_weights_path)
-        composite_scores = compute_composite_scores(metrics, composite_score_weights)
-        for region in ["BG", "NCR", "ED", "ET"]:
-            model_weights[region][model_name] = composite_scores[region]
-    for region in model_weights:
-        total_weight = sum(model_weights[region].values())
-        for model_name in model_weights[region]:
-            model_weights[region][model_name] /= total_weight
+    # Get performance weights for all classes (BG, NCR, ED, ET)
+    perf_weights = {r: {} for r in REGIONS}
+    for m in models_dict:
+        metrics = load_weights(f"../models/performance/{m}/average_metrics.json")
+        cs = compute_composite_scores(metrics, composite_score_weights)
+        for r in REGIONS:
+            perf_weights[r][m] = cs[r]
+    for r in REGIONS:
+        total = sum(perf_weights[r].values())
+        for m in perf_weights[r]:
+            perf_weights[r][m] /= total
 
     # Create a thread-safe progress queue for UI updates
     progress_queue = Queue()
 
-    with torch.no_grad(), torch.amp.autocast('cuda'):
+    with torch.no_grad():
         for batch_data in test_data_loader:
             image = batch_data["image"].to(config.device)
             reference_image_path = batch_data["path"][0]
-            ref_img = nib.load(reference_image_path)  # Load reference once per batch
+            ref_img = nib.load(reference_image_path)
             patient_id = extract_patient_id(reference_image_path)
             print(f"\nProcessing patient: {patient_id}\n")
 
             w_ttd, w_tta = 0.5, 0.5
-            adjusted_weights = {region: {} for region in ["BG", "NCR", "ED", "ET"]}
             model_predictions = {}
             model_uncertainties = {}
 
@@ -223,7 +238,7 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
             for model_name, (model, inferer) in models_dict.items():
                 args_list.append((model_name, model, inferer, image, config.device, n_iterations, w_ttd, w_tta))
             
-             # Run model inference concurrently using ThreadPoolExecutor
+            # Run model inference concurrently using ThreadPoolExecutor
             last_progress = [0]
             futures_list = []
             with ThreadPoolExecutor(max_workers=len(args_list)) as executor:
@@ -241,99 +256,51 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
                 
                 # Retrieve results from all futures.
                 for future in as_completed(futures_list):
-                    mname, hybrid_mean, hybrid_uncertainty = future.result()
-                    model_predictions[mname] = hybrid_mean
-                    model_uncertainties[mname] = hybrid_uncertainty
-                
-                    for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
-                        alpha = 1
-                        uncertainty_penalty = (1 - alpha * np.median(hybrid_uncertainty[idx]))
-                        print("Uncertainty median ", np.median(hybrid_uncertainty[idx]))
-                        print("Uncertainty penalty ", uncertainty_penalty)
-
-                        adjusted_weights[region][mname] = model_weights[region][mname] * uncertainty_penalty
-                        print(f"Adjusted weight for {mname}: ", adjusted_weights[region][mname])
+                    mname, adjusted_prediction, combined_uncertainty = future.result()
+                    model_predictions[mname] = adjusted_prediction
+                    model_uncertainties[mname] = combined_uncertainty
 
                 progress_bar.progress(100, text="100% completed")
 
-            # Step 2: Normalize weights per region.
-            for region in ["BG", "NCR", "ED", "ET"]:
-                total_weight = sum(adjusted_weights[region].values())
-                for model_name in adjusted_weights[region]:
-                    adjusted_weights[region][model_name] /= total_weight
-                    print(f"Model: {model_name}, Region: {region}, Final Weight: {adjusted_weights[region][model_name]:.3f}")
+            fused_logits = None
+            for name, pred in model_predictions.items():
+                w_log = torch.stack([
+                    pred[i] * perf_weights[REGIONS[i]][name]
+                    for i in range(len(REGIONS))
+                ])
+                fused_logits = w_log  if fused_logits is None else fused_logits +  w_log
 
-            # Step 3: Fuse predictions using the adjusted weights.
-            weighted_logits = {region: [] for region in ["BG", "NCR", "ED", "ET"]}
-            for model_name in models_dict.keys():
-                # Convert the stored NumPy logits map to a torch tensor.
-                # Expected shape: [num_classes, H, W, D]
-                logits = torch.from_numpy(model_predictions[model_name]).to(config.device)
-                for idx, region in enumerate(["BG", "NCR", "ED", "ET"]):
-                    weight = torch.tensor(adjusted_weights[region][model_name], dtype=torch.float32, device=config.device)
-                    region_logits = logits[idx]
-                    weighted_logits[region].append(weight * region_logits)
+            T_opt = 100*4.117968559265137
+            probabilities = torch.softmax(fused_logits.float()/T_opt, dim=0)
+            seg = probabilities.argmax(dim=0)
 
-            # Fuse logits by summing weighted contributions.
-            fused_bg = torch.sum(torch.stack(weighted_logits["BG"]), dim=0)
-            fused_tumor = [torch.sum(torch.stack(weighted_logits[region]), dim=0) for region in ["NCR", "ED", "ET"]]
-            fused_logits = torch.stack([fused_bg] + fused_tumor, dim=0)
-
-            # Convert the ensembled logits to probability maps by applying softmax.
-            fused_probs = torch.softmax(fused_logits, dim=0)
-            seg = fused_probs.argmax(dim=0).unsqueeze(0)
-
-
-            # --- Fuse uncertainty maps for all classes (BG, NCR, ED, ET) ---
+            # Fuse uncertainty maps for tumor regions
             fused_uncertainty = {}
             for idx, region in enumerate(["NCR", "ED", "ET"]):
-                uncertainty_sum = torch.zeros_like(torch.from_numpy(model_uncertainties[next(iter(model_uncertainties))][idx+1]))
+                uncertainty_sum = torch.zeros_like(model_uncertainties[next(iter(model_uncertainties))][idx+1])
                 for model_name in model_uncertainties:
-                    weight = adjusted_weights[region][model_name]
-                    uncertainty_sum += weight * torch.from_numpy(model_uncertainties[model_name][idx+1])
+                    weight = perf_weights[region][model_name]
+                    uncertainty_sum += weight * model_uncertainties[model_name][idx+1]
                 fused_uncertainty[region] = minmax_uncertainties(uncertainty_sum.cpu().numpy())
-            
-            # --- Save probability maps ---
-            output_path = os.path.join(
-                output_dir, f"hybrid_softmax_{patient_id}.nii.gz"
-            )
-            save_probability_map_as_nifti(fused_probs, ref_img, output_path)
 
-            # --- Save segmentation ---
-            output_path = os.path.join(
-                output_dir, f"hybrid_segmentation_{patient_id}.nii.gz"
-            )
-            seg = seg.squeeze(0)  # remove batch dimension
+            # Save all outputs
+            output_path = os.path.join(output_dir, f"softmax_{patient_id}.nii.gz")
+            save_probability_map_as_nifti(probabilities, ref_img, output_path)
+
+            output_path = os.path.join(output_dir, f"segmentation_{patient_id}.nii.gz")
+            seg = seg.squeeze(0)
             save_segmentation_as_nifti(seg, ref_img, output_path)
 
-            # --- Save uncertainty maps --- 
+            # Save uncertainty maps
             for region in ["NCR", "ED", "ET"]:
                 output_path = os.path.join(output_dir, f"uncertainty_{region}_{patient_id}.nii.gz")
                 save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
-            
-            global_uncertainty = np.zeros_like(fused_uncertainty["NCR"]) # Use one of the maps as shape reference 
-            seg_np = seg.cpu().numpy() # Convert segmentation to a numpy array
-            region_to_label = {"NCR": 1, "ED": 2, "ET": 3}
-            for region, label in region_to_label.items(): 
-                region_mask = (seg_np == label) 
-                global_uncertainty[region_mask] = fused_uncertainty[region][region_mask]
-
-            global_output_path = os.path.join(output_dir, f"uncertainty_global_{patient_id}.nii.gz") 
-            save_uncertainty_as_nifti(global_uncertainty, ref_img, global_output_path) 
-            print(f"Global uncertainty map saved to {global_output_path}")
 
             torch.cuda.empty_cache()
 
 # if __name__ == "__main__":
-#     patient_id = "00657"
-#     train_loader, _ = dataloaders.get_loaders(
-#         batch_size=config.batch_size,
-#         json_path=config.json_path,
-#         basedir=config.root_dir,
-#         fold=None,
-#         roi=config.roi,
-#         use_final_split=True,
-#     )
+#     patient_id = "01556"
 #     models_dict = load_all_models()
 #     composite_score_weights = {"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}
-#     ensemble_segmentation(train_loader, models_dict, composite_score_weights, n_iterations=10, patient_id=patient_id)
+#     test_loader = dataloaders.load_test_data(config.json_path, config.root_dir)
+#     ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_iterations=1, patient_id=patient_id, output_dir="./assets/segmentations")
