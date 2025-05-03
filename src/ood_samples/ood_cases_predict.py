@@ -10,10 +10,10 @@ import re
 sys.path.append("../")
 import models as models
 import ensemble.simple_averaging as simple_avg
-import ensemble.hybrid_uncertainty_weighting as hyb_unc
+import ensemble.hybrid as hyb_unc
 import ensemble.performance_weighted as pwe
-import ensemble.tta_only_weighted as tta_pred
-import ensemble.ttd_only_weighted as ttd_pred
+import ensemble.tta as tta_pred
+import ensemble.ttd as ttd_pred
 import config.config as config
 from dataset import dataloaders
 from dataset.transforms import get_test_transforms
