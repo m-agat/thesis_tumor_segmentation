@@ -1,7 +1,7 @@
 import pandas as pd
 
 # tta_df = pd.read_csv("../ensemble/output_segmentations/tta/ece_results_per_subregion.csv")
-ttd_df = pd.read_csv("../ensemble/output_segmentations/ttd/ece_results_per_subregion.csv")
+ttd_df = pd.read_csv("../ensemble/output/ttd/ece_results_per_subregion_ttd.csv")
 # hybrid_df = pd.read_csv("../ensemble/output_segmentations/hybrid_new/ece_results_per_subregion_hybrid.csv")
 tta_df = pd.read_csv("../ensemble/output/tta/ece_results_per_subregion_tta.csv")# 
 hybrid_df = pd.read_csv("../ensemble/output/hybrid/ece_results_per_subregion_hybrid1.csv") 
@@ -75,7 +75,7 @@ for df, model_name in zip([tta_df, ttd_df, hybrid_df], ["tta", "ttd", "hybrid"])
         'ET': df['ET_ECE'].std()
     }
     print(model_name)
-    print(avg_ece_subregions)
-    print(std_ece_subregions)
+    print("Avg ECE: ", avg_ece_subregions)
+    print("STD ECE", std_ece_subregions)
     print("\n")
 

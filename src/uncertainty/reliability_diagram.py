@@ -131,7 +131,7 @@ def main():
         ax.plot(bin_centers, avg_acc, marker='o', linestyle='-', linewidth=2, label='Observed Accuracy')
         ax.plot([0, 1], [0, 1], 'k--', label='Perfect Calibration')
         ax.set_title(f"Reliability Diagram: {class_labels[c]}")
-        ax.set_xlabel('Confidence')
+        ax.set_xlabel('Predicted probability')
         ax.set_ylabel('Accuracy')
         ax.set_xlim([0, 1])
         ax.set_ylim([0, 1])
