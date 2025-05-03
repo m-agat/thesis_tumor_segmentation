@@ -107,6 +107,26 @@ def parse_args():
     parser.add_argument(
         "--subset_size", type=int, default=10, help="Size of subset for testing"
     )
+    # ─── ensemble flags ────────────────────────────────────────
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["simple", "perf", "tta", "ttd", "hybrid"],
+        required=True,
+        help="Which fusion strategy to run",
+    )
+    parser.add_argument(
+        "--n_iter",
+        type=int,
+        default=10,
+        help="Number of TTA/TTD samples (only used for tta, ttd, hybrid)",
+    )
+    parser.add_argument(
+        "--patient_id",
+        type=str,
+        default=None,
+        help="(Optional) restrict inference to this one patient ID",
+    )
     return parser.parse_args()
 
 
