@@ -3,15 +3,18 @@ import streamlit as st
 import nibabel as nib
 import numpy as np
 import matplotlib.pyplot as plt
-
+import altair as alt
+import pandas as pd 
+import torch
 from file_utils import find_available_outputs
 from visualization import (
     plot_segmentation,
     plot_ground_truth,
     plot_probabilities,
     plot_uncertainty,
-    compute_simple_volumes
+    volumes_from_nii
 )
+from evaluate_performance import compute_metrics
 
 
 def render_data_tab(raw_paths: list[str], preproc_paths: list[str] | None):
@@ -33,13 +36,17 @@ def render_data_tab(raw_paths: list[str], preproc_paths: list[str] | None):
         idx = st.slider("Slice Index (Original)", 0, max_slice - 1, max_slice // 2, key="orig_slice")
         cols = st.columns(len(raw_paths))
         for col, path in zip(cols, raw_paths):
-            slice_img = nib.load(path).dataobj[..., idx]
+            modality = extract_modality(path)
+            img   = nib.load(path, mmap=False)
+            data  = img.get_fdata()
+            slice_img = data[..., idx]
             with col:
-               vmin, vmax = np.percentile(slice_img, (1, 99))
-               fig, ax = plt.subplots(figsize=(3,3))
-               ax.imshow(slice_img, cmap="gray", vmin=vmin, vmax=vmax)
-               ax.axis("off")
-               st.pyplot(fig)
+                st.markdown(f"**{modality}**", unsafe_allow_html=True)
+                vmin, vmax = np.percentile(slice_img, (1, 99))
+                fig, ax = plt.subplots(figsize=(3, 3))
+                ax.imshow(slice_img, cmap="gray", vmin=vmin, vmax=vmax)
+                ax.axis("off")
+                st.pyplot(fig)
     else:
         st.warning("No original scans to preview.")
 
@@ -51,7 +58,9 @@ def render_data_tab(raw_paths: list[str], preproc_paths: list[str] | None):
         idx2 = st.slider("Slice Index (Preprocessed)", 0, max_slice - 1, max_slice // 2, key="preproc_slice")
         cols2 = st.columns(len(preproc_paths))
         for col, path in zip(cols2, preproc_paths):
-            slice_img = nib.load(path).dataobj[..., idx2]
+            img   = nib.load(path, mmap=False)
+            data  = img.get_fdata()
+            slice_img = data[..., idx]
             with col:
                vmin, vmax = np.percentile(slice_img, (1, 99))
                fig, ax = plt.subplots(figsize=(3,3))
@@ -61,6 +70,12 @@ def render_data_tab(raw_paths: list[str], preproc_paths: list[str] | None):
     elif preproc_paths:
         st.info("No new preprocessed scans; previewing original scans only.")
 
+def extract_modality(path: str) -> str:
+    basename = os.path.basename(path).lower()
+    for mod in ["flair", "t1ce", "t1", "t2"]:
+        if mod in basename:
+            return mod.upper() if mod != "t1ce" else "T1ce"
+    return "Unknown"
 
 def render_results_tab(
     output_dir: str,
@@ -150,6 +165,9 @@ def render_results_tab(
     slice_idx = st.slider("Slice Index", 0, max_slice - 1, max_slice // 2, key="res_slice")
     brain_slice = (brain_full[..., slice_idx] if brain_full is not None else sample[..., slice_idx])
 
+    # Opacity control (used for segmentation, probability, uncertainty overlays)
+    opacity = st.slider("Overlay Opacity", min_value=0.0, max_value=1.0, value=0.4, step=0.05, key="overlay_opacity")
+
     fig_w, fig_h = 600, 600
 
     # Row 1: Segmentation & GT
@@ -162,7 +180,7 @@ def render_results_tab(
                 brain_slice,
                 nib.load(outputs[pid]["seg"]).get_fdata()[..., slice_idx],
                 seg_tissues,
-                opacity=0.4,
+                opacity=opacity,
                 width=fig_w,
                 height=fig_h
             )
@@ -186,7 +204,7 @@ def render_results_tab(
                 brain_slice,
                 nib.load(gt_path or outputs[pid].get("gt")).get_fdata()[..., slice_idx],
                 gt_tissues,
-                opacity=0.4,
+                opacity=opacity,
                 width=fig_w,
                 height=fig_h
             )
@@ -202,7 +220,7 @@ def render_results_tab(
             fig_prob = plot_probabilities(
                 brain_slice,
                 [(lbl, data[..., slice_idx]) for lbl, data in prob_slices],
-                opacity=0.4,
+                opacity=opacity,
                 width=fig_w,
                 height=fig_h
             )
@@ -224,7 +242,8 @@ def render_results_tab(
                 [(lbl, data[..., slice_idx]) for lbl, data in unc_slices],
                 threshold=thr,
                 mode=mode,
-                opacity=0.4,
+                opacity=opacity,
+                cmap="hot",
                 width=fig_w,
                 height=fig_h
             )
@@ -239,12 +258,75 @@ def render_results_tab(
         else:
             st.write("Uncertainty map hidden. Enable checkbox above.")
 
-    # Download segmentation
-    if show_seg:
-        buf = fig_seg.to_image(format="png")
-        st.download_button(
-            "Download Segmentation Figure",
-            data=buf,
-            file_name=f"seg_{pid}.png",
-            mime="image/png"
+    # ─── VOLUMES ────────────────────────────────────────────────────────────────
+    pred_vols = volumes_from_nii(outputs[pid]["seg"])       # dict
+    gt_vols   = {}
+    if show_gt:
+        gt_path_eff = gt_path or outputs[pid].get("gt")
+        if gt_path_eff:
+            gt_vols = volumes_from_nii(gt_path_eff)
+
+    # ---------- predicted -------------------------------------------------------
+
+    st.markdown("## 📏 **Tumour Volumes**")
+    st.subheader("Predicted")
+
+    labels = ["NCR (cm³)", "ED (cm³)", "ET (cm³)", "Total (cm³)"]
+    default_dict = {lbl: 0.0 for lbl in labels}
+    pred_dict = {**default_dict, **pred_vols}
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    for col, lbl in zip((c1, c2, c3, c4), labels):
+        value = pred_dict[lbl]
+        col.markdown(
+            f"""<div style="text-align:center;">
+                    <h4 style="margin-bottom:0.2rem;">{lbl}</h4>
+                    <h2 style="margin-top:0;">{value:.2f}</h2>
+                </div>""",
+            unsafe_allow_html=True,
         )
+
+    if show_gt:
+        st.subheader("Ground truth")
+        gt_dict = {**default_dict, **gt_vols}
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        for col, lbl in zip((c1, c2, c3, c4), labels):
+            value = gt_dict[lbl]
+            col.markdown(
+                f"""<div style="text-align:center;">
+                        <h4 style="margin-bottom:0.2rem;">{lbl}</h4>
+                        <h2 style="margin-top:0;">{value:.2f}</h2>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+    
+    # ─── PERFORMANCE METRICS ───────────────────────────────────────────────────
+    if show_gt and outputs[pid].get("seg") and (gt_path or outputs[pid].get("gt")):
+        st.markdown("## 📊 **Segmentation Performance Metrics**")
+
+        # load raw arrays
+        seg_arr = nib.load(outputs[pid]["seg"]).get_fdata().astype(np.uint8)
+        gt_arr  = nib.load(gt_path or outputs[pid].get("gt")).get_fdata().astype(np.uint8)
+
+        # build binary masks per label (1=NCR, 2=ED, 3=ET)
+        labels = [1, 2, 3]
+        pred_list = [torch.from_numpy((seg_arr == lbl).astype(np.uint8)) for lbl in labels]
+        gt_list   = [torch.from_numpy((gt_arr  == lbl).astype(np.uint8)) for lbl in labels]
+
+        # compute your metrics
+        dice_scores, hd95_scores, sens_scores, spec_scores = compute_metrics(pred_list, gt_list)
+
+        # put into a pandas table
+        df = pd.DataFrame({
+            "Sub-region": ["NCR", "ED", "ET"],
+            "Dice":       dice_scores,
+            "HD95 (mm)":  hd95_scores,
+            "Sensitivity": sens_scores,
+            "Specificity": spec_scores
+        })
+
+        # display
+        st.table(df)

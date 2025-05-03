@@ -22,8 +22,18 @@ def file_upload_section():
     if use_example:
         example_dir = os.path.join(BASE_DIR, "assets", "example", "raw")
         st.sidebar.info("Using example case.")
-        raw_paths = glob.glob(os.path.join(example_dir, "*.nii*"))
-        raw_paths = reorder_modalities(raw_paths)
+        # collect all NIfTI files in example directory
+        example_files = sorted(glob.glob(os.path.join(example_dir, "*.nii*")))
+        # separate ground truth file (e.g., *_seg.nii.gz) from raw modalities
+        gt_candidates = [f for f in example_files if 'seg' in os.path.basename(f).lower()]
+        raw_candidates = [f for f in example_files if f not in gt_candidates]
+        # reorder only the raw modalities
+        raw_paths = reorder_modalities(raw_candidates)
+        # pick the first ground truth if available
+        gt_path = gt_candidates[0] if gt_candidates else None
+        if gt_path:
+            st.sidebar.success(f"Using example GT: {os.path.basename(gt_path)}")
+        return raw_paths, gt_path
     else:
         uploaded = st.sidebar.file_uploader(
             "Upload up to 4 files (NIfTI or DICOM)",

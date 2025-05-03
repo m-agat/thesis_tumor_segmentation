@@ -3,6 +3,10 @@ import numpy as np
 from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric, DiceMetric
 from monai.utils.enums import MetricReduction
 from scipy.ndimage import center_of_mass
+import sys 
+
+sys.path.append("../")
+import config.config as config
 
 DEVICE = config.device
 def compute_metrics(pred_list, gt_list):
@@ -11,8 +15,8 @@ def compute_metrics(pred_list, gt_list):
     pred_list, gt_list: lists of length C, each tensor [H,W,D]
     """
     # Prepare batch-channel tensors
-    y_pred = torch.stack([torch.as_tensor(p) for p in pred_list], dim=0).unsqueeze(0)
-    y_gt   = torch.stack([torch.as_tensor(g) for g in gt_list],   dim=0).unsqueeze(0)
+    y_pred = torch.stack([torch.as_tensor(p).to(DEVICE) for p in pred_list], dim=0).unsqueeze(0)
+    y_gt   = torch.stack([torch.as_tensor(g).to(DEVICE) for g in gt_list],   dim=0).unsqueeze(0)
 
     # Dice (including background)
     dice_metric = DiceMetric(
@@ -33,10 +37,12 @@ def compute_metrics(pred_list, gt_list):
     hd95 = np.zeros(len(dice_scores), dtype=float)
     for i in range(len(pred_list)):
         # prepare single-channel batch as [1,1,H,W,D]
-        pred_ch = pred_list[i].unsqueeze(0).unsqueeze(0)
-        gt_ch   = gt_list[i].unsqueeze(0).unsqueeze(0)
+        pred_ch = pred_list[i].unsqueeze(0).unsqueeze(0).to(DEVICE)
+        gt_ch   = gt_list[i].unsqueeze(0).unsqueeze(0).to(DEVICE)
+
         pred_empty = torch.sum(pred_ch).item() == 0
         gt_empty   = not_nans[i] == 0
+        
         if pred_empty and gt_empty:
             # both empty
             hd95[i] = 0.0
