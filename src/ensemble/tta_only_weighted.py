@@ -220,7 +220,7 @@ def ensemble_segmentation(loader, models_dict, wts, n_iter=10, pid=None, out_dir
             img = batch['image'].to(DEVICE)
             ref_path = batch['path'][0]
             gt = batch['label'].to(DEVICE)
-            pid_str = re.findall(r"\d+", ref_path)[-1]
+            pid_str = re.findall(r'_([A-Z\d]+(?:_[A-Z\d]+)*)', ref_path)[-1]
             print(f"Processing {pid_str}")
 
             preds, uncs = {}, {}
@@ -270,6 +270,7 @@ def ensemble_segmentation(loader, models_dict, wts, n_iter=10, pid=None, out_dir
                 'Specificity overall': float(np.mean(spec[1:])),
             })
 
+            print("--- TTA results ---")
             print("Dice: ", dice_scores)
             print("HD95: ", hd95)
             print("Sensitivity: ", sens)

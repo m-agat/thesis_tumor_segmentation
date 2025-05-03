@@ -25,6 +25,11 @@ from utils.utils import AverageMeter
 #### Load Models ####
 #####################
 
+REGIONS = ["BG", "NCR", "ED", "ET"]
+DEVICE = config.device
+ROI = config.roi
+SW_BATCH = config.sw_batch_size
+OVERLAP = config.infer_overlap
 
 def load_model(model_class, checkpoint_path, device):
     """
@@ -108,173 +113,127 @@ def compute_composite_scores(metrics, weights):
 #############################
 
 
-def save_segmentation_as_nifti(
-    predicted_segmentation, reference_image_path, output_path
-):
-    """
-    Save the predicted segmentation as a NIfTI file.
-
-    Parameters:
-    - predicted_segmentation: The segmentation output as a tensor or numpy array.
-    - reference_image_path: Path to the reference NIfTI image (for affine and header copying).
-    - output_path: Path where the new segmentation NIfTI file will be saved.
-    """
-    if isinstance(predicted_segmentation, torch.Tensor):
-        predicted_segmentation = predicted_segmentation.cpu().numpy()
-
-    predicted_segmentation = predicted_segmentation.astype(np.uint8)
-
-    ref_img = nib.load(reference_image_path)
-    seg_img = nib.Nifti1Image(
-        predicted_segmentation, affine=ref_img.affine, header=ref_img.header
-    )
-    nib.save(seg_img, output_path)
-
-    print(f"Segmentation saved to {output_path}")
-
-def save_probability_map_as_nifti(prob_map, ref_img, output_path):
-    if isinstance(prob_map, torch.Tensor):
-        prob_map = prob_map.cpu().numpy()
-    prob_map = prob_map.astype(np.float32)
-    hdr = ref_img.header.copy()
-    hdr.set_data_dtype(np.float32)
-    prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=hdr)
-    nib.save(prob_img, output_path)
-    print(f"Probability map saved to {output_path}")
+def save_nifti(arr, ref_path, out_path, out_dtype=np.uint8):
+    if isinstance(arr, torch.Tensor):
+        arr = arr.detach().cpu().numpy()
+    arr = arr.astype(out_dtype)
+    ref = nib.load(ref_path)
+    nib.save(nib.Nifti1Image(arr, ref.affine, ref.header), out_path)
+    print(f"Saved: {out_path}")
 
 
 ########################################
 #### Gather performance metrics ########
 ########################################
 
-
-def compute_metrics(pred, gt):
+def compute_metrics(pred_list, gt_list):
     """
     Compute Dice, HD95, Sensitivity, and Specificity for segmentation predictions.
+    pred_list, gt_list: lists of length C, each tensor [H,W,D]
     """
+    # Prepare batch-channel tensors
+    y_pred = torch.stack([torch.as_tensor(p) for p in pred_list], dim=0).unsqueeze(0)
+    y_gt   = torch.stack([torch.as_tensor(g) for g in gt_list],   dim=0).unsqueeze(0)
+
+    # Dice (including background)
     dice_metric = DiceMetric(
-        include_background=False, reduction=MetricReduction.NONE, get_not_nans=True
+        include_background=True,
+        reduction=MetricReduction.NONE,
+        get_not_nans=True,
     )
-    confusion_metric = ConfusionMatrixMetric(
-        include_background=False,
-        metric_name=["sensitivity", "specificity"],
-        reduction="none",
-        compute_sample=False,
-    )
-
-    pred_stack = torch.stack(pred)
-    gt_stack = torch.stack(gt)
-
-    # Compute Dice Scores
-    dice_metric(y_pred=pred, y=gt)
+    dice_metric(y_pred=y_pred, y=y_gt)
     dice_scores, not_nans = dice_metric.aggregate()
-    dice_scores = dice_scores.cpu().numpy()
+    dice_scores = dice_scores.squeeze(0).cpu().numpy()  # shape: (C,)
+    not_nans     = not_nans.squeeze(0).cpu().numpy()    # shape: (C,)
 
-    for i, dice_score in enumerate(dice_scores):
-        if not_nans[i] == 0:  # Tissue is absent in ground truth
-            pred_empty = torch.sum(pred_stack[i]).item() == 0
-            dice_scores[i] = 1.0 if pred_empty else 0.0
+    # Correct Dice when GT empty
+    for i in range(len(dice_scores)):
+        if not_nans[i] == 0:
+            dice_scores[i] = 1.0 if pred_list[i].sum().item() == 0 else 0.0
 
-    # Compute HD95
-    hd95 = compute_hausdorff_distance(
-        y_pred=pred_stack,
-        y=gt_stack,
-        include_background=False,
-        distance_metric="euclidean",
-        percentile=95,
-    )
-    hd95 = hd95.squeeze(0).cpu().numpy()
-    for i in range(len(hd95)):
-        # Use the i-th class mask directly.
-        pred_empty = torch.sum(pred[i]).item() == 0
-        gt_empty = not_nans[i] == 0
-
+    hd95 = np.zeros(len(dice_scores), dtype=float)
+    for i in range(len(pred_list)):
+        # prepare single-channel batch as [1,1,H,W,D]
+        pred_ch = pred_list[i].unsqueeze(0).unsqueeze(0)
+        gt_ch   = gt_list[i].unsqueeze(0).unsqueeze(0)
+        pred_empty = torch.sum(pred_ch).item() == 0
+        gt_empty   = not_nans[i] == 0
         if pred_empty and gt_empty:
-            print(f"Region {i}: Both GT and Prediction are empty. Setting HD95 to 0.")
+            # both empty
             hd95[i] = 0.0
-
-        elif gt_empty and not pred_empty:  # Ground truth is absent.
-            pred_array = pred[i].cpu().numpy()  # Use pred[i] directly.
-            if np.sum(pred_array) > 0:
-                # Compute Center of Mass for the predicted mask
+        elif gt_empty and not pred_empty:
+            # GT absent, prediction present
+            pred_array = pred_ch.cpu().numpy()[0,0]
+            if pred_array.sum() > 0:
                 com = center_of_mass(pred_array)
-                com_mask = np.zeros_like(pred_array, dtype=np.uint8)
-                com_coords = tuple(
-                    map(int, map(round, com))
-                )  # Round and convert to integer indices
-                com_mask[com_coords] = 1
-
-                # Convert CoM mask back to tensor
-                com_mask_tensor = (
-                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                )
-
-                # Compute Hausdorff Distance between prediction and CoM mask
-                mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(pred)[i].unsqueeze(0),
-                    y=com_mask_tensor.unsqueeze(0),
-                    include_background=False,
-                    distance_metric="euclidean",
-                    percentile=95,
-                )
-
-                print(f"Mock HD95 for region {i} (GT absent):", mock_val.item())
-                print(f"Before update, hd95: {hd95}")
-                hd95[i] = mock_val.item()
-                print(f"After update, hd95: {hd95}")
+                if any(np.isnan(com)):
+                    hd95[i] = 0.0
+                else:
+                    com_mask = np.zeros_like(pred_array, dtype=np.uint8)
+                    coords = tuple(map(int, map(round, com)))
+                    com_mask[coords] = 1
+                    mask_tensor = torch.from_numpy(com_mask).unsqueeze(0).unsqueeze(0).to(torch.float32).to(DEVICE)
+                    mock_hd = compute_hausdorff_distance(
+                        y_pred=pred_ch,
+                        y=mask_tensor,
+                        include_background=False,
+                        distance_metric="euclidean",
+                        percentile=95,
+                    )
+                    hd95[i] = float(mock_hd.squeeze().item())
             else:
-                # No prediction or GT; HD95 = 0
                 hd95[i] = 0.0
-
-        elif pred_empty and not gt_empty:  # Model predicts tissue is absent
-            gt_array = torch.stack(gt)[i].cpu().numpy()
-            if np.sum(gt_array) > 0:
-                # Compute Center of Mass for the GT mask
+        elif pred_empty and not gt_empty:
+            # Prediction empty, GT present
+            gt_array = gt_ch.cpu().numpy()[0,0]
+            if gt_array.sum() > 0:
                 com = center_of_mass(gt_array)
-                com_mask = np.zeros_like(gt_array, dtype=np.uint8)
-                com_coords = tuple(
-                    map(int, map(round, com))
-                )  # Round and convert to integer indices
-                com_mask[com_coords] = 1
-
-                # Convert CoM mask back to tensor
-                com_mask_tensor = (
-                    torch.from_numpy(com_mask).to(torch.float32).to(config.device)
-                )
-
-                # Compute Hausdorff Distance between GT CoM and empty prediction
-                mock_val = compute_hausdorff_distance(
-                    y_pred=torch.stack(gt)[i].unsqueeze(0),
-                    y=com_mask_tensor.unsqueeze(0),
-                    include_background=False,
-                    distance_metric="euclidean",
-                    percentile=95,
-                )
-
-                print(
-                    f"Mock HD95 for region {i} (Prediction absent):",
-                    mock_val.item(),
-                )
-                print(f"Before update, hd95: {hd95}")
-                hd95[i] = mock_val.item()
-                print(f"After update, hd95: {hd95}")
+                if any(np.isnan(com)):
+                    hd95[i] = 0.0
+                else:
+                    com_mask = np.zeros_like(gt_array, dtype=np.uint8)
+                    coords = tuple(map(int, map(round, com)))
+                    com_mask[coords] = 1
+                    mask_tensor = torch.from_numpy(com_mask).unsqueeze(0).unsqueeze(0).to(torch.float32).to(DEVICE)
+                    mock_hd = compute_hausdorff_distance(
+                        y_pred=gt_ch,
+                        y=mask_tensor,
+                        include_background=False,
+                        distance_metric="euclidean",
+                        percentile=95,
+                    )
+                    hd95[i] = float(mock_hd.squeeze().item())
             else:
-                print(f"Warning: GT mask for region {i} is unexpectedly empty.")
                 hd95[i] = 0.0
+        else:
+            # both present: direct hd95
+            hd_t = compute_hausdorff_distance(
+                y_pred=pred_ch,
+                y=gt_ch,
+                include_background=False,
+                distance_metric="euclidean",
+                percentile=95,
+            )
+            hd95[i] = float(hd_t.squeeze().item())
 
-    # Compute Sensitivity & Specificity
-    confusion_metric(y_pred=pred, y=gt)
-    sensitivity, specificity = confusion_metric.aggregate()
-    sensitivity = sensitivity.squeeze(0).cpu().numpy()
-    specificity = specificity.squeeze(0).cpu().numpy()
+    # Sensitivity / Specificity
+    conf_metric = ConfusionMatrixMetric(
+        include_background=True,
+        metric_name=["sensitivity","specificity"],
+        reduction="none",
+    )
+    conf_metric(y_pred=y_pred, y=y_gt)
+    sens, spec = conf_metric.aggregate()
+    sens = sens.squeeze(0).cpu().numpy()
+    spec = spec.squeeze(0).cpu().numpy()
 
-    for i in range(len(sensitivity)):
-        if not_nans[i] == 0:  # Tissue is absent
-            pred_empty = torch.sum(pred_stack[i]).item() == 0
-            sensitivity[i] = 1.0 if pred_empty else 0.0
-            specificity[i] = 1.0
+    # Correct sens/spec when GT empty
+    for i in range(len(sens)):
+        if not_nans[i] == 0:
+            sens[i] = 1.0 if pred_list[i].sum().item() == 0 else 0.0
+            spec[i] = 1.0
 
-    return dice_scores, hd95, sensitivity, specificity
+    return dice_scores, hd95, sens, spec
 
 
 ########################################
@@ -319,9 +278,9 @@ def save_average_metrics(metrics_list, filename):
 def ensemble_segmentation(
     test_loader,
     models_dict,
-    composite_score_weights,
+    wts,
     patient_id=None,
-    output_dir="./output_segmentations/perf_weight",
+    out_dir="./output_segmentations/perf_weight",
     ood=False
 ):
     """
@@ -331,9 +290,9 @@ def ensemble_segmentation(
     - patient_id: ID of the patient whose scan is being segmented.
     - test_loader: Dataloader for the test set.
     - models_dict: Dictionary containing trained models and their inferers.
-    - output_dir: Directory where segmentations will be saved.
+    - out_dir: Directory where segmentations will be saved.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     if patient_id is not None:
         # Get a subset of test loader with the specific patient
         test_data_loader = config.find_patient_by_id(patient_id, test_loader)
@@ -348,7 +307,7 @@ def ensemble_segmentation(
             f"../models/performance/{model_name}/average_metrics.json"
         )
         metrics = load_weights(performance_weights_path)
-        composite_scores = compute_composite_scores(metrics, composite_score_weights)
+        composite_scores = compute_composite_scores(metrics, wts)
         for region in ["BG", "NCR", "ED", "ET"]:
             model_weights[region][model_name] = composite_scores[region]
     # Normalize weights per class
@@ -399,67 +358,50 @@ def ensemble_segmentation(
             # Stack background with tumor channels so that final shape is (num_classes, H, W, D)
             fused_logits = torch.stack([fused_background] + fused_tumor, dim=0)
             # Apply softmax and compute segmentation map
-            seg = (
-                torch.nn.functional.softmax(fused_logits, dim=0)
-                .argmax(dim=0)
-                .unsqueeze(0)
-            )
+            seg = torch.nn.functional.softmax(fused_logits, dim=0).argmax(dim=0) # Shape: (H, W, D)
 
-            pred_one_hot = [(seg == i).float() for i in range(1, 4)]
-            gt_one_hot = [(gt == i).float() for i in range(1, 4)]
+            pred_list = [(seg == i).float() for i in range(len(REGIONS))]
+            if gt.shape[1] == len(REGIONS):
+                gt_list = [gt[:, i].squeeze(0) for i in range(len(REGIONS))]
+            else:
+                gt_list = [(gt == i).float().squeeze(0) for i in range(len(REGIONS))]
 
-            dice, hd95, sensitivity, specificity = compute_metrics(
-                pred_one_hot, gt_one_hot
-            )
-            print(
-                f"Dice NCR: {dice[0].item():.4f}, Dice ED: {dice[1].item():.4f}, Dice ET: {dice[2].item():.4f}\n",
-                f"HD95 NCR: {hd95[0].item():.2f}, HD95 ED: {hd95[1].item():.2f}, HD95 ET: {hd95[2].item():.2f}\n",
-                f"Sensitivity NCR: {sensitivity[0].item():.4f}, ED: {sensitivity[1].item():.4f}, ET: {sensitivity[2].item():.4f}\n",
-                f"Specificity NCR: {specificity[0].item():.4f}, ED: {specificity[1].item():.4f}, ET: {specificity[2].item():.4f}\n",
-            )
-
-            patient_metrics.append(
-                {
-                    "patient_id": patient_id,
-                    "Dice NCR": dice[0].item(),
-                    "Dice ED": dice[1].item(),
-                    "Dice ET": dice[2].item(),
-                    "Dice overall": np.mean(dice),
-                    "HD95 NCR": hd95[0].item(),
-                    "HD95 ED": hd95[1].item(),
-                    "HD95 ET": hd95[2].item(),
-                    "HD95 overall": np.mean(hd95),
-                    "Sensitivity NCR": sensitivity[0].item(),
-                    "Sensitivity ED": sensitivity[1].item(),
-                    "Sensitivity ET": sensitivity[2].item(),
-                    "Sensitivity overall": np.mean(sensitivity),
-                    "Specificity NCR": specificity[0].item(),
-                    "Specificity ED": specificity[1].item(),
-                    "Specificity ET": specificity[2].item(),
-                    "Specificity overall": np.mean(specificity),
-                }
-            )
-
-            seg = seg.squeeze(0)  # remove batch dimension
+            # Compute performance metrics
+            dice_scores, hd95, sens, spec = compute_metrics(pred_list, gt_list)
+            patient_metrics.append({
+                'patient_id': patient_id,
+                **{f"Dice {REGIONS[i]}": dice_scores[i] for i in range(1, len(REGIONS))},
+                **{f"HD95 {REGIONS[i]}": hd95[i] for i in range(1, len(REGIONS))},
+                **{f"Sensitivity {REGIONS[i]}": sens[i] for i in range(1, len(REGIONS))},
+                **{f"Specificity {REGIONS[i]}": spec[i] for i in range(1, len(REGIONS))},
+                'Dice overall': float(np.mean(dice_scores[1:])),
+                'HD95 overall': float(np.mean(hd95[1:])),
+                'Sensitivity overall': float(np.mean(sens[1:])),
+                'Specificity overall': float(np.mean(spec[1:])),
+            })
+            print("--- Perf weight results ---")
+            print("Dice: ", dice_scores)
+            print("HD95: ", hd95)
+            print("Sensitivity: ", sens)
+            print("Specificity: ", spec)
 
             # Save segmentation
             output_path = os.path.join(
-                output_dir, f"perf_weight_{patient_id}_pred_seg.nii.gz"
+                out_dir, f"perf_weight_{patient_id}_pred_seg.nii.gz"
             )
-            save_segmentation_as_nifti(seg, reference_image_path, output_path)
+            save_nifti(seg, reference_image_path, output_path)
 
             # Save probability maps
             probs = torch.softmax(fused_logits, dim=0)  # Shape: (4, H, W, D)
             prob_output_path = os.path.join(
-                output_dir, f"perf_weight_softmax_{patient_id}.nii.gz"
+                out_dir, f"perf_weight_softmax_{patient_id}.nii.gz"
             )
-            save_probability_map_as_nifti(probs, reference_image_path, prob_output_path)
+            save_nifti(probs, reference_image_path, prob_output_path)
 
-            start_time = time.time()
             torch.cuda.empty_cache()
 
-    csv_path = os.path.join(output_dir, "perf_weight_patient_metrics.csv")
-    json_path = os.path.join(output_dir, "perf_weight_average_metrics.json")
+    csv_path = os.path.join(out_dir, "perf_weight_patient_metrics.csv")
+    json_path = os.path.join(out_dir, "perf_weight_average_metrics.json")
     save_metrics_csv(patient_metrics, csv_path)
     save_average_metrics(patient_metrics, json_path)
 
@@ -494,10 +436,10 @@ def visualize_segmentation(segmentation, patient_id):
 if __name__ == "__main__":
     patient_id = "01502"
     models_dict = load_all_models()
-    composite_score_weights = {
+    wts = {
         "Dice": 0.45,
         "HD95": 0.15,
         "Sensitivity": 0.3,
         "Specificity": 0.1,
     }
-    ensemble_segmentation(config.test_loader, models_dict, composite_score_weights)
+    ensemble_segmentation(config.test_loader, models_dict, wts)
