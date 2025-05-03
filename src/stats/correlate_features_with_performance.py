@@ -3,9 +3,9 @@ import os
 from scipy.stats import spearmanr
 
 # List of individual and ensemble models for which performance data is available
-individual_models = ["vnet", "segresnet", "attunet", "swinunetr"]
+# individual_models = ["vnet", "segresnet", "attunet", "swinunetr"]
 ensemble_models = ["simple_avg", "perf_weight", "ttd", "tta", "hybrid_new"]  # Add your ensemble model names here
-models = individual_models + ensemble_models
+models = ensemble_models
 
 # Load performance data for each model
 performance_data = {}

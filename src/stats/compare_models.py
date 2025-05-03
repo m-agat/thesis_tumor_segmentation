@@ -160,20 +160,20 @@ def main(csvs, models, output_file):
                 group2_is_ensemble = is_ensemble_model(comp['group2'])
                 
                 # Only keep comparisons where one group is an ensemble and the other is not
-                if (group1_is_ensemble and not group2_is_ensemble) or (not group1_is_ensemble and group2_is_ensemble):
-                    significant_results.append({
-                        'metric': metric,
-                        'test_type': test_type,
-                        'overall_statistic': overall_stat,
-                        'overall_p_value': overall_p,
-                        'group1': comp['group1'],
-                        'group2': comp['group2'],
-                        'posthoc_statistic': comp['statistic'],
-                        'posthoc_p_value': comp['p_value'],
-                        'direction': comp['direction'],
-                        'group1_value': comp['group1_value'],
-                        'group2_value': comp['group2_value']
-                    })
+                # if (group1_is_ensemble and not group2_is_ensemble) or (not group1_is_ensemble and group2_is_ensemble):
+                significant_results.append({
+                    'metric': metric,
+                    'test_type': test_type,
+                    'overall_statistic': overall_stat,
+                    'overall_p_value': overall_p,
+                    'group1': comp['group1'],
+                    'group2': comp['group2'],
+                    'posthoc_statistic': comp['statistic'],
+                    'posthoc_p_value': comp['p_value'],
+                    'direction': comp['direction'],
+                    'group1_value': comp['group1_value'],
+                    'group2_value': comp['group2_value']
+                })
     
     # Save significant results to CSV
     if significant_results:
@@ -202,8 +202,11 @@ if __name__ == "__main__":
 # Example usage:
 # python compare_models.py --csvs "model1.csv,model2.csv,model3.csv" --models "Model1,Model2,Model3" --output "significant_results.csv"
 
-# python compare_models.py --csvs "../models/performance/vnet/patient_metrics_test.csv,../models/performance/segresnet/patient_metrics_test.csv,../models/performance/attunet/patient_metrics_test.csv,../models/performance/swinunetr/patient_metrics_test.csv" --models "VNet,SegResNet,AttUNet,SwinUNETR" --output "significant_results.csv"
+# python compare_models.py --csvs "../models/performance/vnet/patient_metrics_test_vnet.csv,../models/performance/segresnet/patient_metrics_test_segresnet.csv,../models/performance/attunet/patient_metrics_test_attunet.csv,../models/performance/swinunetr/patient_metrics_test_swinunetr.csv" --models "VNet,SegResNet,AttUNet,SwinUNETR" --output "significant_results_indiv.csv"
 
 # python compare_models.py --csvs "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv,../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv, ../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv,../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv, ../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv, ../models/performance/segresnet/patient_metrics_test_segresnet.csv, ../models/performance/attunet/patient_metrics_test_attunet.csv, ../models/performance/swinunetr/patient_metrics_test_swinunetr.csv" --models "Simple-Avg,Performance-Weighted,TTD,Hybrid,TTA,SegResNet,AttUNet,SwinUNETR" --output "significant_results_all_models.csv"
 
 # python compare_models.py --csvs "../models/performance/segresnet/patient_metrics_test_segresnet.csv,../models/performance/attunet/patient_metrics_test_attunet.csv,../models/performance/swinunetr/patient_metrics_test_swinunetr.csv,../ensemble/output_segmentations/hybrid_new/hybrid_patient_metrics_test.csv" --models "SegResNet,Attention UNet,SwinUNETR,Hybrid" --output "significant_results.csv"
+
+# ensembles only
+# python compare_models.py --csvs "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv,../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv,../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv,../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv,../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv" --models "Simple-Avg,Performance-Weighted,TTD,Hybrid,TTA" --output "significant_results_ensemble_models.csv"

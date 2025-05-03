@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import sys 
 from monai import data
+import re 
 
 sys.path.append("../")
 import models as models
@@ -49,7 +50,7 @@ def load_predict_models():
     # loads attunet, segresnet, swinunetr
     return hyb_unc.load_all_models()
 
-def create_data_loader(mri_scans):
+def create_data_loader(mri_scans, pid):
     """
     Constructs a MONAI DataLoader from a list of MRI scan file paths.
     Here, mri_scans is a list containing file paths for each modality.
@@ -74,14 +75,16 @@ def create_data_loader(mri_scans):
     shape = first_img.get_fdata().shape  
     
     # Create a dummy label with the same spatial dimensions as shape var
-    dummy_label_array = np.zeros(shape, dtype=np.uint8)
-    dummy_label_path = os.path.join(os.getcwd(), "dummy_label.nii.gz")
-    dummy_label_nii = nib.Nifti1Image(dummy_label_array, affine=first_img.affine)
-    nib.save(dummy_label_nii, dummy_label_path)
+    # dummy_label_array = np.zeros(shape, dtype=np.uint8)
+    # dummy_label_path = os.path.join(os.getcwd(), "dummy_label.nii.gz")
+    # dummy_label_nii = nib.Nifti1Image(dummy_label_array, affine=first_img.affine)
+    # nib.save(dummy_label_nii, dummy_label_path)
+
+    gt_path = ood_data_path + f"/{pid}/{pid}_seg.nii.gz"
 
     entry = {
         "image": mri_scans,       # list of file paths, one per modality
-        "label": dummy_label_path,     # dummy label
+        "label": gt_path,     # dummy label
         "path": mri_scans[0]      # use the first modality's path as reference (e.g., for patient ID)
     }
     test_files = [entry]
@@ -105,7 +108,6 @@ if __name__ == "__main__":
     # Predict segmentation for each case
     for case in ood_cases:
         preprocessed_files = get_preprocessed_files(case)
-        print("Preprocessed files: ", preprocessed_files)
 
         # Skip if no preprocessed files found
         if not preprocessed_files:
@@ -120,31 +122,32 @@ if __name__ == "__main__":
         print("Patient ID: ", patient_id)
 
         # if patient_id == "VIGO_02" or patient_id == "VIGO_03" or patient_id == "MMPG":
-        if patient_id != "VIGO_01":
-            continue
+        if patient_id == "VIGO_01" or patient_id == "VIGO_03":
+            print("creating data loader")
+            data_loader = create_data_loader(preprocessed_files, pid=patient_id)
 
-        data_loader = create_data_loader(preprocessed_files)
+            # Create separate output directories for each method
+            simple_avg_dir = os.path.join("segmentations", "simple_avg")
+            pwe_dir = os.path.join("segmentations", "pwe") 
+            tta_dir = os.path.join("segmentations", "tta")
+            ttd_dir = os.path.join("segmentations", "ttd")
+            hybrid_dir = os.path.join("segmentations", "hybrid")
 
-        # Create separate output directories for each method
-        simple_avg_dir = os.path.join("segmentations", "simple_avg")
-        pwe_dir = os.path.join("segmentations", "pwe") 
-        tta_dir = os.path.join("segmentations", "tta")
-        ttd_dir = os.path.join("segmentations", "ttd")
-        hybrid_dir = os.path.join("segmentations", "hybrid")
+            # Create all directories
+            for directory in [simple_avg_dir, pwe_dir, tta_dir, ttd_dir, hybrid_dir]:
+                os.makedirs(directory, exist_ok=True)
+            # Create a directory for segmentation outputs
+            seg_output_dir = os.path.join("segmentations")
+            os.makedirs(seg_output_dir, exist_ok=True)
 
-        # Create all directories
-        for directory in [simple_avg_dir, pwe_dir, tta_dir, ttd_dir, hybrid_dir]:
-            os.makedirs(directory, exist_ok=True)
-        # Create a directory for segmentation outputs
-        seg_output_dir = os.path.join("segmentations")
-        os.makedirs(seg_output_dir, exist_ok=True)
-
-        # Predict segmentation
-        simple_avg.ensemble_segmentation(data_loader, models, output_dir=simple_avg_dir, ood=True)
-        pwe.ensemble_segmentation(data_loader, models, composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, output_dir=pwe_dir, ood=True)
-        tta_pred.ensemble_segmentation(data_loader, models, composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, n_iterations=10, output_dir=tta_dir, ood=True)
-        ttd_pred.ensemble_segmentation(data_loader, models, composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, n_iterations=10, output_dir=ttd_dir, ood=True)
-        hyb_unc.ensemble_segmentation(data_loader, models, composite_score_weights={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, n_iterations=10, output_dir=hybrid_dir, ood=True)
+            # Predict segmentation
+            print("predicting segmentation")
+            simple_avg.ensemble_segmentation(data_loader, models, output_dir=simple_avg_dir, ood=True)
+            pwe.ensemble_segmentation(data_loader, models, wts={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, out_dir=pwe_dir, ood=True)
+            # tta_pred.ensemble_segmentation(data_loader, models, wts={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, n_iter=10, out_dir=tta_dir)
+            # ttd_pred.ensemble_segmentation(data_loader, models, wts={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, n_iter=10, out_dir=ttd_dir)
+            # hyb_unc.ensemble_segmentation(data_loader, models, wts={"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}, n_iter=10, out_dir=hybrid_dir)
+            print("Done")
 
 
 
