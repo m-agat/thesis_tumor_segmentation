@@ -5,7 +5,7 @@ import seaborn as sns
 
 # Set whether to plot model performance or ensemble performance.
 # Choose plot_type = "model" or "ensemble"
-plot_type = "ensemble"  # change to "model" to plot model results
+plot_type = "model"  # change to "model" to plot model results
 
 if plot_type == "model":
     base_path = r"..\models\performance"
@@ -13,7 +13,7 @@ if plot_type == "model":
                    "segresnet": "SegResNet", 
                    "attunet": "Attention UNet", 
                    "swinunetr": "SwinUNETR"}
-    file_pattern = "patient_metrics_test.csv"
+    file_pattern = "patient_metrics_test"
 elif plot_type == "ensemble":
     base_path = r"..\ensemble\output_segmentations"
     group_names = {"simple_avg": "Simple Avg",
@@ -56,7 +56,7 @@ for key, label in group_names.items():
     if plot_type == "ensemble":
         csv_file = os.path.join(base_path, key, file_pattern.format(key))
     else:
-        csv_file = os.path.join(base_path, key, file_pattern)
+        csv_file = os.path.join(base_path, key, f"{file_pattern}_{key}.csv")
     df = pd.read_csv(csv_file)
     
     for metric in dice_metrics:
@@ -76,7 +76,7 @@ for i, metric in enumerate(dice_metrics):
 
 plt.suptitle("Patient-Level Distribution of Dice Metrics", fontsize=20, y=1.05)
 plt.tight_layout()
-plt.savefig("./Figures/violin_plots_dice_metrics_combined.png", bbox_inches='tight', dpi=300)
+plt.savefig("./Figures/violin_plots_dice_metrics_combined_indiv.png", bbox_inches='tight', dpi=300)
 
 # Create individual figures for each metric
 for metric in dice_metrics:

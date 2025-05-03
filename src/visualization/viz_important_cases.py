@@ -13,6 +13,7 @@ worst_case    = "01483"
 
 attunet_case    = "01556"  # best at segmenting NCR
 segresnet_case  = "01474"  # good at segmenting ET and ED
+swinunetr_case = "01405"
 borderline_case = "01529"  # most challenging
 
 # Optionally, you might want to override the slice index per case.
@@ -35,12 +36,13 @@ cases = [
 cases_indiv = [
     (attunet_case, ""),
     (segresnet_case, ""),
+    (swinunetr_case, ""),
     (borderline_case, "")
 ]
 
 gt_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge\RelabeledTrainingData"
-pred_base = "../ensemble/output_segmentations"
-# pred_base = "../models/predictions"
+# pred_base = "../ensemble/output_segmentations"
+pred_base = "../models/predictions"
 
 models_dict_names = {
     "simple_avg": "SimpleAvg",
@@ -225,7 +227,7 @@ def visualize_with_gridspec(cases, sources, slice_indices):
     total_cols = n_cols_cases + 1  # first column for model labels
 
     fig = plt.figure(figsize=(20, 15))
-    width_ratios = [0.1] + [1.5] * n_cols_cases
+    width_ratios = [0.2] + [1.5] * n_cols_cases
     gs = GridSpec(
         nrows=n_rows, ncols=total_cols,
         figure=fig, 
@@ -290,8 +292,8 @@ def visualize_with_gridspec(cases, sources, slice_indices):
         wspace=0.02, hspace=0.02
     )
     plt.tight_layout(pad=0.1, w_pad=0.1, h_pad=0.1)
-    plt.savefig("three_cases_composite_gridspec.png", dpi=300, bbox_inches="tight")
+    plt.savefig("example_cases_indiv.png", dpi=300, bbox_inches="tight")
     plt.show()
 
 # Create the composite figure.
-visualize_with_gridspec(cases, sources, {})
+visualize_with_gridspec(cases_indiv, sources_indiv, {})

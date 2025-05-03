@@ -21,106 +21,99 @@ def load_data(csv_files, model_names):
 
 def add_significance_markers(ax, means, sems, significant_pairs, model_names):
     """
-    Add significance markers between significantly different groups with smart positioning
-    to avoid overlaps and ensure they're above value labels
+    Add significance markers between significantly different groups with automatic
+    positioning and enough headroom to show them on large‐scale metrics like HD95.
     """
     if not significant_pairs:
         return
-        
-    # Sort pairs by distance between bars
-    sorted_pairs = []
-    for pair in significant_pairs:
-        group1, group2 = pair
-        idx1 = model_names.index(group1)
-        idx2 = model_names.index(group2)
-        distance = abs(idx2 - idx1)
-        sorted_pairs.append((distance, group1, group2))
-    
-    sorted_pairs.sort(reverse=True)  # Sort by distance, longest first
-    
-    # Keep track of used y-positions for each x-position
+
+    # --- 1) compute a dynamic offset based on axis span ---
+    ymin, ymax = ax.get_ylim()
+    span = ymax - ymin
+
+    # choose, say, 5% of your span for the gap between levels,
+    # and 2% of your span for the little "cap" on top of the bars
+    base_offset = 0.05 * span
+    text_height = 0.02 * span
+
+    # prepare data structures
     used_positions = {i: [] for i in range(len(model_names))}
-    base_offset = 0.05  # Increased base spacing to account for value labels
-    text_height = 0.02  # Height needed for value text
-    
-    # First, add all value positions to used_positions
+
+    # register your existing bar tops + error bars so you don't collide
     for i, (mean, sem) in enumerate(zip(means, sems)):
-        height = mean + sem + text_height
-        used_positions[i].append(height)
-    
-    for _, group1, group2 in sorted_pairs:
-        idx1 = model_names.index(group1)
-        idx2 = model_names.index(group2)
-        start_idx = min(idx1, idx2)
-        end_idx = max(idx1, idx2)
-        
-        # Find the maximum height including error bars and text
-        max_height = max(means[i] + sems[i] + text_height 
-                        for i in range(start_idx, end_idx + 1))
-        
-        # Find the minimum available y-position that doesn't overlap
-        y_offset = base_offset
-        while True:
-            position_taken = False
-            test_y = max_height + y_offset
-            
-            # Check if this y-position is already used by any x-position in the range
-            for x in range(start_idx, end_idx + 1):
-                for used_y in used_positions[x]:
-                    if abs(test_y - used_y) < base_offset:
-                        position_taken = True
+        top = mean + sem
+        used_positions[i].append(top + text_height)
+
+    # sort your pairs so wide comparisons go first (optional but helps readability)
+    pairs = sorted(significant_pairs,
+                   key=lambda pair: abs(model_names.index(pair[0]) - model_names.index(pair[1])),
+                   reverse=True)
+
+    for g1, g2 in pairs:
+        i1, i2 = model_names.index(g1), model_names.index(g2)
+        lo, hi = min(i1, i2), max(i1, i2)
+
+        # find the highest “occupied” y within this span
+        block_max = max(
+            means[i] + sems[i] + text_height
+            for i in range(lo, hi + 1)
+        )
+
+        # now slide up in increments of base_offset until you find a free slot
+        level = block_max + base_offset
+        conflict = True
+        while conflict:
+            conflict = False
+            for x in range(lo, hi + 1):
+                for used in used_positions[x]:
+                    if abs(level - used) < (base_offset * 0.8):
+                        conflict = True
                         break
-                if position_taken:
+                if conflict:
+                    level += base_offset
                     break
-            
-            if not position_taken:
-                break
-            y_offset += base_offset
-        
-        # Add the line at the chosen height
-        line_height = max_height + y_offset
-        
-        # Add horizontal line
-        ax.plot([idx1, idx2], [line_height] * 2, 'k-', lw=1)
-        
-        # Add vertical lines
-        ax.plot([idx1, idx1], [line_height - 0.01, line_height], 'k-', lw=1)
-        ax.plot([idx2, idx2], [line_height - 0.01, line_height], 'k-', lw=1)
-        
-        # Add asterisk
-        ax.text((idx1 + idx2) / 2, line_height + 0.005, '*', 
-                ha='center', va='bottom', fontsize=10)
-        
-        # Record the used y-positions
-        for x in range(start_idx, end_idx + 1):
-            used_positions[x].append(line_height)
-            
-    # Adjust the y-axis limit to accommodate all significance bars
-    max_y = max(max(positions) for positions in used_positions.values() if positions)
-    ax.set_ylim(0, max_y + 0.05)  # Add some padding above the highest bar
+
+        # draw your lines *without clipping*
+        ax.plot([i1, i2], [level, level], 'k-', lw=1, clip_on=False)
+        ax.plot([i1, i1], [level - (0.01 * span), level], 'k-', lw=1, clip_on=False)
+        ax.plot([i2, i2], [level - (0.01 * span), level], 'k-', lw=1, clip_on=False)
+        ax.text((i1 + i2) / 2, level + (0.005 * span), '*',
+                ha='center', va='bottom', fontsize=12, clip_on=False)
+
+        # remember you’ve used that height
+        for x in range(lo, hi + 1):
+            used_positions[x].append(level)
+
+    # finally, extend your y‐axis so none of that is cut off
+    new_max = max(max(pos_list) for pos_list in used_positions.values())
+    ax.set_ylim(ymin, new_max + base_offset)
+
 
 # Load significant results
-sig_results = pd.read_csv('../stats/significant_results_all_models.csv')
+# sig_results = pd.read_csv('../stats/significant_results_all_models.csv')
+sig_results = pd.read_csv('../stats/significant_results_indiv.csv')
 
-# Filter for Speci metrics
-sig_results = sig_results[sig_results['metric'].str.contains('Speci')]
+# Filter for HD95 metrics
+sig_results = sig_results[sig_results['metric'].str.contains('HD95')]
 
 csv_files = [
-    "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv",
-    "../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv", 
-    "../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv",
-    "../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv", 
-    "../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv", 
+    # "../ensemble/output_segmentations/simple_avg/simple_avg_patient_metrics_test.csv",
+    # "../ensemble/output_segmentations/perf_weight/perf_weight_patient_metrics_test.csv", 
+    # "../ensemble/output_segmentations/ttd/ttd_patient_metrics_test.csv",
+    # "../ensemble/output_segmentations/hybrid_new/hybrid_new_patient_metrics_test.csv", 
+    # "../ensemble/output_segmentations/tta/tta_patient_metrics_test.csv",
+    "../models/performance/vnet/patient_metrics_test_vnet.csv",  
     "../models/performance/segresnet/patient_metrics_test_segresnet.csv", 
     "../models/performance/attunet/patient_metrics_test_attunet.csv", 
     "../models/performance/swinunetr/patient_metrics_test_swinunetr.csv" 
 ]
 model_names = [
-    "Simple-Avg",
-    "Performance-Weighted",
-    "TTD",
-    "Hybrid",
-    "TTA",
+    # "Simple-Avg",
+    # "Performance-Weighted",
+    # "TTD",
+    # "Hybrid",
+    # "TTA",
+    "VNet",
     "SegResNet",
     "AttUNet",
     "SwinUNETR"
@@ -132,7 +125,7 @@ data = load_data(csv_files, model_names)
 plt.style.use('seaborn-v0_8-whitegrid')
 
 # Define metrics to plot and their corresponding colors
-metrics = ['Specificity NCR', 'Specificity ED', 'Specificity ET']
+metrics = ['HD95 NCR', 'HD95 ED', 'HD95 ET']
 colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Blue, Orange, Green
 
 # Create figure with subplots
@@ -143,6 +136,9 @@ for i, (metric, color) in enumerate(zip(metrics, colors)):
     # Calculate mean and standard error for each model
     means = data.groupby('Model')[metric].mean()
     sems = data.groupby('Model')[metric].sem()
+
+    means = means.reindex(model_names)
+    sems  = sems.reindex(model_names)
     
     # Create bar plot
     ax = axes[i]
@@ -153,7 +149,7 @@ for i, (metric, color) in enumerate(zip(metrics, colors)):
     ax.set_title(metric, fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(model_names, rotation=45, ha='right', fontsize=12)
-    ax.set_ylabel('Speci Score', fontsize=12)
+    ax.set_ylabel('HD95 Score', fontsize=12)
     ax.grid(True, axis='y', alpha=0.3)
     
     # Add value labels on top of bars
@@ -170,5 +166,5 @@ for i, (metric, color) in enumerate(zip(metrics, colors)):
 
 # Adjust layout
 plt.tight_layout()
-plt.savefig('./Figures/specificity_scores_indiv_vs_ensemble.png', dpi=300, bbox_inches='tight')
+plt.savefig('./Figures/hd95_scores_barplots_indiv.png', dpi=300, bbox_inches='tight')
 plt.show()
