@@ -59,3 +59,35 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
     ├── utils                        ← Utility functions
     └── visualization                ← Plotting & figure generation
 ```
+
+## 🛠 Getting Started
+
+### Requirements
+
+- Python 3.10+  
+- PyTorch 1.12+  
+- MONAI 0.9+  
+- see `requirements.txt` for full list  
+
+### Installation
+
+1. **Clone this repo**
+
+   ```bash
+   git clone https://github.com/m-agata/thesis_tumor_segmentation.git
+   cd thesis_tumor_segmentation
+   ```
+3. **Create & activate a virtual‑env**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   ```
+4. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+5. **Run the app**
+   ```bash
+   cd src/brain_seg_app
+   python -m streamlit run app.py
+   ```
