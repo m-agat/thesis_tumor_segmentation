@@ -1,80 +1,102 @@
-import os
 import re
+from pathlib import Path
 import numpy as np
 import nibabel as nib
 from sklearn.metrics import confusion_matrix
-import seaborn as sns
 import matplotlib.pyplot as plt
+import seaborn as sns
 import matplotlib as mpl
 
-# Define model and paths
-model = "vnet"
-gt_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge\RelabeledTrainingData"
-# pred_path = f"../ensemble/output_segmentations/{model}"
-pred_path = f"../models/predictions/{model}"
+from visualization.utils.constants import GT_DIR  # root folder for ground‐truth volumes
 
-# Find all predicted segmentation files for the model in the prediction directory.
-# This assumes filenames match the pattern: ttd_{patient_id}_pred_seg.nii.gz
-pred_images = sorted([f for f in os.listdir(pred_path) if re.match(rf'{model}_\d{{5}}_pred_seg.nii.gz', f)])
-pred_patient_ids = [re.search(rf'{model}_(\d{{5}})_pred_seg', f).group(1) for f in pred_images]
+def gather_seg_pairs(
+    pred_dir: Path,
+    model: str,
+    labels: list[int] = [0,1,2,3]
+) -> list[tuple[Path,Path]]:
+    """
+    Return list of (gt_path, pred_path) for every patient that has both.
+    """
+    pred_files = sorted(p for p in pred_dir.iterdir()
+                        if re.fullmatch(fr"seg_{model}_\d{{5}}\.nii\.gz", p.name))
+    pairs = []
+    for pf in pred_files:
+        pid = re.search(rf"seg_{model}_(\d{{5}})", pf.name).group(1)
+        gt = Path(GT_DIR)/f"BraTS2021_{pid}"/f"BraTS2021_{pid}_seg.nii.gz"
+        if gt.exists():
+            pairs.append((gt, pf))
+        else:
+            print(f"  ⚠️  missing GT for {pid}, skipping")
+    return pairs
 
-# Define the segmentation labels (0=BG, 1=NCR, 2=ED, 3=ET)
-labels = [0, 1, 2, 3]
+def compute_aggregated_confusion(
+    pairs: list[tuple[Path,Path]],
+    labels: list[int] = [0,1,2,3]
+) -> np.ndarray:
+    """
+    Given list of (gt_path, pred_path), load volumes, flatten, sum per-patient CMs.
+    """
+    agg = np.zeros((len(labels),len(labels)), dtype=np.int64)
+    for gt_path, pred_path in pairs:
+        gt = nib.load(str(gt_path)).get_fdata().astype(int).flatten()
+        pr = nib.load(str(pred_path)).get_fdata().astype(int).flatten()
+        if gt.shape != pr.shape:
+            print(f"  ⚠️  shape mismatch {gt_path.name}")
+            continue
+        agg += confusion_matrix(gt, pr, labels=labels)
+    return agg
 
-# Initialize an aggregated confusion matrix
-aggregated_cm = np.zeros((len(labels), len(labels)), dtype=np.int64)
+def plot_confusion_matrix(
+    cm: np.ndarray,
+    labels: list[int] = [0,1,2,3],
+    class_names: list[str]=["BG","NCR","ED","ET"],
+    cmap_colors: list[str]=None,
+    out_path: Path = Path("confusion_matrix.png")
+):
+    """
+    Normalize, convert to %, and seaborn‑plot the heatmap, then save.
+    """
+    # normalize rows → fractions
+    norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+    norm = np.nan_to_num(norm)
+    pct  = (norm * 100).round(1)
 
-# Iterate over each patient in the test set
-for pid in pred_patient_ids:
-    # Build ground truth path (assumes folder: BraTS2021_{pid} and filename: BraTS2021_{pid}_seg.nii.gz)
-    gt_seg_path = os.path.join(gt_path, f"BraTS2021_{pid}", f"BraTS2021_{pid}_seg.nii.gz")
-    if not os.path.exists(gt_seg_path):
-        print(f"Ground truth segmentation not found for patient {pid}. Skipping.")
-        continue
-    gt_seg = nib.load(gt_seg_path).get_fdata().astype(np.int32)
+    # colormap
+    if cmap_colors is None:
+        cmap_colors = ['#f7fcfd','#e0ecf4','#bfd3e6','#9ebcda',
+                       '#8c96c6','#8c6bb1','#88419d','#6e016b']
+    cmap = mpl.colors.LinearSegmentedColormap.from_list("custom", cmap_colors)
 
-    # Build prediction path (filename: ttd_{pid}_pred_seg.nii.gz)
-    pred_seg_file = f"{model}_{pid}_pred_seg.nii.gz"
-    pred_seg_path = os.path.join(pred_path, pred_seg_file)
-    if not os.path.exists(pred_seg_path):
-        print(f"Prediction segmentation not found for patient {pid}. Skipping.")
-        continue
-    pred_seg = nib.load(pred_seg_path).get_fdata().astype(np.int32)
+    plt.figure(figsize=(6,5))
+    sns.heatmap(
+        pct, annot=True, fmt=".1f", cmap=cmap,
+        xticklabels=class_names, yticklabels=class_names,
+        vmin=0, vmax=100
+    )
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
+    plt.title("Confusion Matrix (%)")
+    out_path.parent.mkdir(exist_ok=True, parents=True)
+    plt.savefig(str(out_path), dpi=300)
+    plt.close()
 
-    # Check if volumes have the same dimensions
-    if gt_seg.shape != pred_seg.shape:
-        print(f"Warning: Volume dimensions mismatch for patient {pid}")
-        print(f"Ground truth shape: {gt_seg.shape}, Prediction shape: {pred_seg.shape}")
-        continue
+def main():
+    import argparse
+    p = argparse.ArgumentParser(description="Aggregate & plot 3D confusion matrix")
+    p.add_argument("model", help="model subfolder name (e.g. vnet, simple_avg)")
+    p.add_argument("--pred-dir", "-p", type=Path,
+                   default=Path(__file__).parents[3]/"models"/"predictions"/"{model}",
+                   help="where to find {model}_{pid}.nii.gz")
+    p.add_argument("--out", "-o", type=Path, default=Path("confusion_matrices"),
+                   help="where to save PNG")
+    args = p.parse_args()
 
-    # Flatten the 3D volumes to 1D arrays of voxel labels
-    y_true = gt_seg.flatten()
-    y_pred = pred_seg.flatten()
+    preds = Path(args.pred_dir)
+    pairs = gather_seg_pairs(preds, args.model)
+    agg   = compute_aggregated_confusion(pairs)
+    outfn = args.out/f"{args.model}_confusion_matrix.png"
+    plot_confusion_matrix(agg, out_path=outfn)
+    print("Saved to", outfn)
 
-    # Compute the confusion matrix for this patient
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
-    # Sum into the aggregated confusion matrix
-    aggregated_cm += cm
-
-# Normalize the aggregated confusion matrix by rows (so each true-class sums to 1)
-cm_normalized = aggregated_cm.astype('float') / aggregated_cm.sum(axis=1, keepdims=True)
-# Replace any NaN (from divisions by zero) with 0
-cm_normalized = np.nan_to_num(cm_normalized)
-# For annotation, convert normalized values to percentages (rounded to one decimal place)
-cm_percent = (cm_normalized * 100).round(1)
-
-# Create a custom colormap (this example uses a gradient from light blue to dark purple)
-colors = ['#f7fcfd', '#e0ecf4', '#bfd3e6', '#9ebcda', '#8c96c6', '#8c6bb1', '#88419d', '#6e016b']
-custom_cmap = mpl.colors.LinearSegmentedColormap.from_list('custom', colors)
-
-# Plot the normalized aggregated confusion matrix
-plt.figure(figsize=(6, 5))
-sns.heatmap(cm_percent, annot=True, fmt=".1f", cmap=custom_cmap,
-            xticklabels=["BG", "NCR", "ED", "ET"],
-            yticklabels=["BG", "NCR", "ED", "ET"],
-            vmin=0, vmax=100)
-plt.xlabel("Predicted Label")
-plt.ylabel("True Label")
-plt.title("Confusion Matrix (%)")
-plt.savefig(f"./confusion_matrices/{model}_confusion_matrix.png")
-plt.show()
+if __name__=="__main__":
+    main()

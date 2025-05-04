@@ -9,11 +9,6 @@ outputs/
 .win_thesis_env/
 myenv/ 
 
-nnUNet_postprocessed/
-nnUNet_predictions
-nnUNet_raw/
-nnUNet_results/
-nnUNet_preprocessed/
 results/
 data/ 
 figures/
