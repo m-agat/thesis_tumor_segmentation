@@ -1,6 +1,5 @@
 > brats2021_challenge
-	> PreprocessedData
-	> TrainingData
+	> RelabeledTrainingData
 	│   > BraTS2021_00000
 	│   │   > BraTS2021_00000_flair.nii.gz
 	│   │   > BraTS2021_00000_seg.nii.gz
