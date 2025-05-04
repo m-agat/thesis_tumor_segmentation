@@ -7,13 +7,8 @@ __pycache__/
 outputs/
 *.pth
 .win_thesis_env/
-myenv/ 
+my_env/ 
 
-nnUNet_postprocessed/
-nnUNet_predictions
-nnUNet_raw/
-nnUNet_results/
-nnUNet_preprocessed/
 results/
 data/ 
 figures/

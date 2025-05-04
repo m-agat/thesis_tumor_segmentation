@@ -3,19 +3,17 @@ import json
 import numpy as np
 import pandas as pd
 import nibabel as nib
-from radiomics import featureextractor
+from radiomics import featureextractor # Requires usage pf myenc environment
 
 # --- Configuration ---
 json_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge\splits\data_splits.json"
-# Base directory for image files (adjust to your directory structure)
 base_dir = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\brats2021challenge"  
 output_csv = "test_set_tumor_stats_all_modalities.csv"
 test_key = "test"
-
-# Define the modalities you want to process (case-insensitive search in file paths)
+ 
 modalities = ["flair", "t1ce", "t1", "t2"]
 
-# Define a list of selected radiomics features to extract.
+# Selected radiomics features to extract
 selected_rad_features = [
     "original_firstorder_Entropy",
     "original_glcm_Contrast",
@@ -24,7 +22,6 @@ selected_rad_features = [
 ]
 
 # --- Initialize the Pyradiomics feature extractor ---
-# Using default settings; you can also pass a parameter file.
 extractor = featureextractor.RadiomicsFeatureExtractor()
 
 # --- Load JSON file with data splits ---

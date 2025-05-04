@@ -104,35 +104,3 @@ def convert_to_serializable(obj):
         return [convert_to_serializable(item) for item in obj]
     else:
         return obj
-
-
-def visualize_slices(
-    image_slice, ground_truth_slice, predicted_slice, patient_path, slice_num
-):
-    plt.figure(figsize=(15, 5))
-
-    # Original image (take one modality for visualization, e.g., FLAIR or T1ce)
-    plt.subplot(1, 3, 1)
-    plt.imshow(image_slice, cmap="gray")
-    plt.title(f"Original Image (Slice {slice_num})")
-    plt.axis("off")
-
-    # Ground truth segmentation
-    plt.subplot(1, 3, 2)
-    plt.imshow(ground_truth_slice)
-    plt.title(f"Ground Truth Segmentation (Slice {slice_num})")
-    plt.axis("off")
-
-    # Generated segmentation
-    plt.subplot(1, 3, 3)
-    plt.imshow(predicted_slice)
-    plt.title(f"Generated Segmentation (Slice {slice_num})")
-    plt.axis("off")
-
-    plt.suptitle(f"Patient: {patient_path}, Slice: {slice_num}", fontsize=16)
-
-    # Save the figure as a file
-    plt.savefig(
-        f"/home/agata/Desktop/thesis_tumor_segmentation/figures/testing/visualization_{patient_path}_{slice_num}.png"
-    )
-    plt.close()

@@ -9,79 +9,66 @@ import subprocess
 import torch
 from torch.utils.data import DataLoader, Subset
 
+# Ensure repo root on path
 current_dir = os.path.dirname(os.path.realpath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-import dataset.dataloaders as dataloaders
+import dataset.dataloaders as dataloaders  # noqa: E402
 
 # ---------------------------------
-# 1. Configuration File Loaders
+# 1. Configuration File Loader
 # ---------------------------------
-
 
 def load_config(file_path=None):
     """
-    Load configuration from JSON file.
-    Convert paths to WSL format if needed.
+    Load JSON configuration from file and convert Windows paths to WSL/Linux if needed.
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = file_path or os.path.join(base_dir, "config.json")
-
     with open(file_path, "r") as f:
-        config = json.load(f)
+        cfg = json.load(f)
 
-    # Convert paths if on WSL
+    # Convert Windows paths if running under WSL
     if platform.system() == "Linux" and "microsoft" in platform.uname().release:
         for key in ["root_dir_local", "default_model_dir"]:
-            if key in config:
-                config[key] = convert_path(config[key])
-
-    return config
+            if key in cfg:
+                cfg[key] = convert_path(cfg[key])
+    return cfg
 
 
 def convert_path(path):
     """
-    Convert Windows paths to WSL/Linux format.
+    Convert Windows-style paths (e.g. C:\\\\path\\to\\file) to WSL/Linux format via wslpath.
+    Returns unchanged if already Linux or URL.
     """
-    if path is None or path.startswith(("/", "https://")):
-        return path  # Return as-is if already in Linux or URL format
-
-    if re.match(r"^[a-zA-Z]:\\", path):  # Convert Windows-style paths
+    if not path or path.startswith(("/", "https://")):
+        return path
+    if re.match(r"^[a-zA-Z]:\\", path):
         try:
-            result = subprocess.run(
-                ["wslpath", "-u", path], capture_output=True, text=True, check=True
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            print(f"Error converting path: {e}")
-            return path  # Return original path if conversion fails
+            res = subprocess.run(["wslpath", "-u", path], capture_output=True, text=True, check=True)
+            return res.stdout.strip()
+        except subprocess.CalledProcessError:
+            return path
     return path
 
+# ---------------------------------
+# 2. Command-line Argument Parser
+# ---------------------------------
 
-# ---------------------------------
-# 2. Command-Line Arguments Parsing
-# ---------------------------------
-def parse_args():
+def _create_config_parser():
     """
-    Parse command-line arguments.
+    Internal: define arguments for configuration and return ArgumentParser.
+    Uses add_help=False and parse_known_args so it won't error on unknown flags.
     """
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--data_path", type=str, help="Path to the dataset")
     parser.add_argument("--model_path", type=str, help="Path to the model directory")
-    parser.add_argument(
-        "--swinunetr_path", type=str, help="Path to the swinunetr model directory"
-    )
-    parser.add_argument(
-        "--segresnet_path", type=str, help="Path to the segresnet model directory"
-    )
-    parser.add_argument(
-        "--vnet_path", type=str, help="Path to the vnet model directory"
-    )
-    parser.add_argument(
-        "--attunet_path", type=str, help="Path to the attunet model directory"
-    )
+    parser.add_argument("--swinunetr_path", type=str, help="Path to the swinunetr model directory")
+    parser.add_argument("--segresnet_path", type=str, help="Path to the segresnet model directory")
+    parser.add_argument("--vnet_path", type=str, help="Path to the vnet model directory")
+    parser.add_argument("--attunet_path", type=str, help="Path to the attunet model directory")
     parser.add_argument(
         "--model_name",
         type=str,
@@ -107,129 +94,118 @@ def parse_args():
     parser.add_argument(
         "--subset_size", type=int, default=10, help="Size of subset for testing"
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["simple", "perf", "tta", "ttd", "hybrid"],
+        help="Which fusion strategy to run",
+    )
+    parser.add_argument(
+        "--n_iter", type=int, default=10,
+        help="Number of TTA/TTD samples (only used for tta, ttd, hybrid)"
+    )
+    parser.add_argument(
+        "--patient_id", type=str, default=None,
+        help="(Optional) restrict inference to this one patient ID"
+    )
+    return parser
 
 
+def parse_args():
+    """
+    Parse only known arguments for config, ignoring others.
+    Returns argparse Namespace.
+    """
+    parser = _create_config_parser()
+    args, _unknown = parser.parse_known_args()
+    return args
+
 # ---------------------------------
-# 3. Initialization Logic
+# 3. Lazy Initialization of Config Values
 # ---------------------------------
-# Load arguments and config
+
+# Only executed at import time, but won’t error on unknown flags
 args = parse_args()
-config = load_config()
+raw_cfg = load_config()
 
-# Root directories and paths
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-root_dir = args.data_path or config.get(
-    "root_dir", "/home/magata/data/brats2021challenge"
-)
-json_path = args.data_path or config.get(
-    "json_path",
-    "/home/magata/data/brats2021challenge/splits/final_training_splits.json",
-)
+# Project root (two levels up from src/config)
+project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
 
-train_folder = convert_path(
-    os.path.join(root_dir, config.get("train_subdir", "split/train"))
+# Data directories
+root_dir = args.data_path or raw_cfg.get(
+    "root_dir", os.path.join(project_root, "data")
 )
-val_folder = convert_path(os.path.join(root_dir, config.get("val_subdir", "split/val")))
-test_folder = convert_path(
-    os.path.join(root_dir, config.get("test_subdir", "split/test"))
+json_path = args.data_path or raw_cfg.get(
+    "json_path", os.path.join(root_dir, "splits/final_training_splits.json")
 )
-cross_val_folder = convert_path(
-    os.path.join(root_dir, config.get("cross_val_subdir", "split/cross_val_train"))
-)
+train_folder = convert_path(os.path.join(root_dir, raw_cfg.get("train_subdir", "split/train")))
+val_folder = convert_path(os.path.join(root_dir, raw_cfg.get("val_subdir", "split/val")))
+test_folder = convert_path(os.path.join(root_dir, raw_cfg.get("test_subdir", "split/test")))
+cross_val_folder = convert_path(os.path.join(root_dir, raw_cfg.get("cross_val_subdir", "split/cross_val_train")))
 
-# Model directories
-model_name = args.model_name
-# default_model_dir = convert_path(config.get("default_model_dir") or os.path.join(project_root, "results", "swinunetr"))
-# model_file_path = os.path.join(args.model_path or config.get("default_model_dir", "/home/magata/results/swinunetr"),
-#                                f"{args.model_name}_model.pt")
-
+# Model paths
 model_paths = {
     "swinunetr": os.path.join(
-        args.swinunetr_path or "/home/magata/results/swinunetr",
+        args.swinunetr_path or raw_cfg.get("swinunetr_path", os.path.join(project_root, "src/models/saved_models/")),
         "best_swinunetr_model.pt",
     ),
     "segresnet": os.path.join(
-        args.segresnet_path or "/home/magata/results/segresnet",
+        args.segresnet_path or raw_cfg.get("segresnet_path", os.path.join(project_root, "src/models/saved_models/")),
         "best_segresnet_model.pt",
     ),
     "attunet": os.path.join(
-        args.attunet_path or "/home/magata/results/attunet", "best_attunet_model.pt"
+        args.attunet_path or raw_cfg.get("attunet_path", os.path.join(project_root, "src/models/saved_models/")),
+        "best_attunet_model.pt",
     ),
     "vnet": os.path.join(
-        args.vnet_path or "/home/magata/results/vnet", "best_vnet_model.pt"
+        args.vnet_path or raw_cfg.get("vnet_path", os.path.join(project_root, "src/models/saved_models/")),
+        "best_vnet_model.pt",
     ),
 }
 
-# Output directory
-output_dir = os.path.join(args.output_path, f"{model_name}")
-# os.makedirs(output_dir, exist_ok=True)
+# Output
+output_dir = os.path.join(args.output_path, args.model_name)
 
-
-# ---------------------------------
-# 4. Display Configuration
-# ---------------------------------
-# def print_config_summary():
-#     print("\n")
-#     print("------ Config Summary ------")
-#     print("--------------------------------------")
-#     print(f"Project root: {project_root}")
-#     print(f"Root directory for data: {root_dir}")
-#     # print(f"Model path: {model_file_path}")
-#     print(f"Output directory: {output_dir}")
-#     print(f"Device: {device}")
-#     print(f"ROI: {roi}")
-#     print(f"Batch Size: {batch_size}")
-#     print(f"Sliding Window Batch Size: {sw_batch_size}")
-#     print(f"Inference Overlap: {infer_overlap}")
-#     print("--------------------------------------")
-#     print("\n")
-
-
-# ---------------------------------
-# 5. Device and Parameters
-# ---------------------------------
+# Device and parameters
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.cuda.empty_cache()
 
-roi = tuple(args.roi if args.roi else config.get("roi", [64, 64, 64]))
-batch_size = args.batch_size or config.get("batch_size", 1)
-sw_batch_size = args.sw_batch_size or config.get("sw_batch_size", 1)
-infer_overlap = args.infer_overlap or config.get("infer_overlap", 0.5)
-max_epochs = config.get("max_epochs", 100)
-val_every = config.get("val_every", 5)
-num_folds = config.get("num_folds", 5)
+roi = tuple(args.roi) if args.roi else tuple(raw_cfg.get("roi", [64, 64, 64]))
+batch_size = args.batch_size or raw_cfg.get("batch_size", 1)
+sw_batch_size = args.sw_batch_size or raw_cfg.get("sw_batch_size", 1)
+infer_overlap = args.infer_overlap or raw_cfg.get("infer_overlap", 0.5)
+max_epochs = raw_cfg.get("max_epochs", 100)
+val_every = raw_cfg.get("val_every", 5)
+num_folds = raw_cfg.get("num_folds", 5)
 
-# ---------------------------------
-# 7. Helper Functions
-# ---------------------------------
+# Helper functions
+
 def create_subset(data_loader, subset_size=10, shuffle=True):
+    """Return a random subset DataLoader."""
     indices = random.sample(range(len(data_loader.dataset)), subset_size)
     subset = Subset(data_loader.dataset, indices)
     return DataLoader(subset, batch_size=batch_size, shuffle=shuffle)
 
 
 def find_patient_by_id(patient_id, data_loader):
-    # Iterate over the dataset to find the matching patient ID in the "label" path
-    index_to_include = next(
-        (
-            idx
-            for idx, data in enumerate(data_loader.dataset)
-            if re.search(r"BraTS2021_(\d+)", data["path"])
-            and re.search(r"BraTS2021_(\d+)", data["path"]).group(1) == patient_id
+    """Restrict inference to a single patient in a DataLoader."""
+    idx = next(
+        (i for i, d in enumerate(data_loader.dataset)
+         if re.search(r"BraTS2021_(\d+)", d["path"]) and
+            re.search(r"BraTS2021_(\d+)", d["path"]).group(1) == patient_id
         ),
         None,
     )
+    if idx is None:
+        raise ValueError(f"Patient ID {patient_id} not found in dataset.")
+    return DataLoader(Subset(data_loader.dataset, [idx]), batch_size=1, shuffle=False)
 
-    if index_to_include is None:
-        raise ValueError(f"Patient ID {patient_id} not found in the test dataset.")
-
-    return DataLoader(
-        Subset(data_loader.dataset, [index_to_include]), batch_size=1, shuffle=False
-    )
-
-
-# ---------------------------------
-# 8. Final Configuration Summary
-# ---------------------------------
-# print_config_summary()
+# Expose public API
+__all__ = [
+    "load_config", "convert_path", "parse_args", "raw_cfg", "args",
+    "project_root", "root_dir", "json_path", "train_folder", "val_folder",
+    "test_folder", "cross_val_folder", "model_paths", "output_dir",
+    "device", "roi", "batch_size", "sw_batch_size", "infer_overlap",
+    "max_epochs", "val_every", "num_folds", "create_subset",
+    "find_patient_by_id",
+]

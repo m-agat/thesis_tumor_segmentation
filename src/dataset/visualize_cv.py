@@ -34,7 +34,7 @@ sns.heatmap(heatmap_data, annot=True, cmap="coolwarm", fmt="g")
 plt.title("Distribution of Region Combinations in Training Splits")
 plt.xlabel("Fold")
 plt.ylabel("Region Combination")
-plt.savefig("regions_distribution_cv_heatmap.png")
+plt.savefig("./Figures/regions_distribution_cv_heatmap.png")
 plt.close()
 
 # Plot bar charts for train, val, and test splits
@@ -54,5 +54,5 @@ for ax, (name, data) in zip(
     ax.set_ylabel("Region Combination")
 
 plt.tight_layout()
-plt.savefig("regions_distribution_cv_barplot.png")
+plt.savefig("./Figures/regions_distribution_cv_barplot.png")
 plt.close()

@@ -6,7 +6,7 @@ from ui.tabs import render_data_tab, render_results_tab
 from data_loader import create_test_loader
 from preprocessing import realign_images_to_reference
 from segmentation import load_models, run_ensemble
-
+import time
 
 def main():
     # Page config
@@ -22,6 +22,7 @@ def main():
             st.sidebar.error("No scans to preprocess.")
         else:
             st.sidebar.info("Starting preprocessing...")
+            t0 = time.time()
             prog = st.sidebar.progress(0)
             # callback to update sidebar progress
             def progress_cb(pct: float):
@@ -32,9 +33,11 @@ def main():
                 PREPROC_DIR,
                 progress_callback=progress_cb
             )
+            elapsed = time.time() - t0
             st.session_state["preproc_paths"] = preproc_paths
             prog.empty()
             st.sidebar.success("Preprocessing complete.")
+            print(f"Preprocessing took: {elapsed:.2f} s")
 
     # Segment button
     if st.sidebar.button("Run Tumor Segmentation", key="btn_segment"):
@@ -50,12 +53,15 @@ def main():
 
             st.sidebar.info("Running segmentation...")
             prog2 = st.sidebar.progress(0)
+            t0 = time.time()
             run_ensemble(
                 loader,
                 models,
                 SEG_DIR,
                 progress_bar=prog2
             )
+            elapsed = time.time() - t0
+            print(f"Segmentation took: {elapsed:.2f} s")
             prog2.empty()
             st.sidebar.success("Segmentation complete.")
 

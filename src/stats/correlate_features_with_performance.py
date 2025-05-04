@@ -1,64 +1,97 @@
-import pandas as pd 
-import os 
+import pandas as pd
 from scipy.stats import spearmanr
+import argparse
+import pandas as pd
+import os 
+from stats.data import load_feature_table, build_model_paths, load_model_performances
+from stats.utils import ensure_dir
 
-# List of individual and ensemble models for which performance data is available
-individual_models = ["vnet", "segresnet", "attunet", "swinunetr"]
-ensemble_models = ["simple_avg", "perf_weight", "ttd", "tta", "hybrid_new"]  # Add your ensemble model names here
-models = individual_models + ensemble_models
-
-# Load performance data for each model
-performance_data = {}
-for model_name in ensemble_models:
-    try:
-        performance_data[model_name] = pd.read_csv(f"../ensemble/output_segmentations/{model_name}/{model_name}_patient_metrics_test.csv")
-    except FileNotFoundError:
-        print(f"Warning: Performance data not found for model {model_name}")
-        continue
-
-# Load the extracted features (from all modalities)
-features = pd.read_csv("./results/test_set_tumor_stats_all_modalities.csv")
-
-# List of feature columns in the features file (excluding patient_id)
-feature_columns = [col for col in features.columns if col != "patient_id"]
-
-correlation_results = []
-metric = "Dice ET"
-
-for model_name in ensemble_models:
-    if model_name not in performance_data:
-        continue
-        
-    print("Model:", model_name)
-    patient_metrics_df = performance_data[model_name]
-    
-    # Merge performance and features data on patient_id so that rows match.
-    merged = pd.merge(patient_metrics_df, features, on="patient_id", how="inner")
-    
-    # Extract the Dice overall scores from the merged DataFrame
+def compute_spearman_correlations(
+    perf_df: pd.DataFrame,
+    features_df: pd.DataFrame,
+    metric: str,
+    alpha: float = 0.05
+) -> pd.DataFrame:
+    """
+    Merge on patient_id, then for each column in features_df (except 'patient_id'),
+    compute Spearman’s rho vs. perf_df[metric]. Returns a DataFrame with:
+      ['Feature','Spearman','p_value'] filtered to p_value < alpha.
+    """
+    merged = pd.merge(perf_df, features_df, on="patient_id", how="inner")
+    rows = []
     scores = merged[metric]
-    
-    # Iterate over each feature column and compute the Spearman correlation.
-    for feature in feature_columns:
-        feat_values = merged[feature]
-        correlation, p_val = spearmanr(feat_values, scores, nan_policy="omit")
-        print(f"Feature: {feature}")
-        print(f"Spearman Correlation: {correlation:.4f}, p-value: {p_val:.4g}\n")
-        
-        if p_val < 0.05:
-            correlation_results.append({
-                "Model": model_name,
-                "Feature": feature,
-                "Spearman Correlation": correlation,
-                "p-value": p_val
-            })
+    for feat in features_df.columns:
+        if feat == "patient_id":
+            continue
+        vals = merged[feat]
+        rho, p = spearmanr(vals, scores, nan_policy="omit")
+        rows.append({
+            "Feature": feat,
+            "Spearman": rho,
+            "p_value": p
+        })
+    df_corr = pd.DataFrame(rows)
+    return df_corr[df_corr["p_value"] < alpha].reset_index(drop=True)
 
-# Create a DataFrame of the correlation results
-correlation_df = pd.DataFrame(correlation_results)
-print(correlation_df)
+def main(
+    feature_csv: str,
+    models: str,
+    perf_base: str,
+    metric: str,
+    alpha: float,
+    out_csv: str
+):
+    # 1) Load
+    features = load_feature_table(feature_csv)
+    # build a { model_name: csv_path } map
+    model_list = [m.strip() for m in models.split(",")]
+    path_map = build_model_paths(
+                   model_list,
+                   perf_base,
+                   metrics_filename="{model}_patient_metrics_test.csv"
+               )
+    perfs = load_model_performances(path_map)
 
-# Save the results to a CSV file.
-correlation_csv_path = f"./results/spearman_correlations_features_{metric}_ensemble.csv"
-os.makedirs(os.path.dirname(correlation_csv_path) or ".", exist_ok=True)
-correlation_df.to_csv(correlation_csv_path, index=False)
-print(f"Correlations saved to: {correlation_csv_path}")
+    # 2) Compute & collect
+    all_results = []
+    for model, df in perfs.items():
+        print(f"\n→ Computing correlations for model: {model}")
+        corr_df = compute_spearman_correlations(df, features, metric, alpha)
+        corr_df.insert(0, "Model", model)
+        all_results.append(corr_df)
+
+    # 3) Combine & save
+    if all_results:
+        result = pd.concat(all_results, ignore_index=True)
+        ensure_dir(os.path.dirname(out_csv) or ".")
+        result.to_csv(out_csv, index=False)
+        print(f"\nSaved correlations to {out_csv}")
+    else:
+        print("No significant correlations found or no data loaded.")
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(
+        description="Compute Spearman correlations between image features and a performance metric"
+    )
+    p.add_argument("--features",   required=True,
+                   help="CSV of extracted features (must include patient_id)")
+    p.add_argument("--models",     required=True,
+                   help="Comma-separated list of model folder names")
+    p.add_argument("--perf-base",  default="../ensemble/output_segmentations",
+                   help="Base path where model folders live")
+    p.add_argument("--metric",     default="Dice ET",
+                   help="Performance column to correlate (e.g. 'Dice ET')")
+    p.add_argument("--alpha",      type=float, default=0.05,
+                   help="Significance threshold for p-values")
+    p.add_argument("--output",     required=True,
+                   help="Path to save the CSV of significant correlations")
+    args = p.parse_args()
+
+    main(
+        feature_csv=args.features,
+        models=args.models,
+        perf_base=args.perf_base,
+        metric=args.metric,
+        alpha=args.alpha,
+        out_csv=args.output
+    )

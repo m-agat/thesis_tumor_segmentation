@@ -88,7 +88,14 @@ def save_segmentation_as_nifti(predicted_segmentation, ref_img, output_path):
         predicted_segmentation = predicted_segmentation.cpu().numpy()
     predicted_segmentation = predicted_segmentation.astype(np.uint8)
     seg_img = nib.Nifti1Image(predicted_segmentation, affine=ref_img.affine, header=ref_img.header)
+
     nib.save(seg_img, output_path)
+    
+    for _ in range(10):
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            break
+        time.sleep(0.1)
+
     print(f"Segmentation saved to {output_path}")
 
 def save_probability_map_as_nifti(prob_map, ref_img, output_path):
@@ -98,8 +105,34 @@ def save_probability_map_as_nifti(prob_map, ref_img, output_path):
     hdr = ref_img.header.copy()
     hdr.set_data_dtype(np.float32)
     prob_img = nib.Nifti1Image(prob_map, affine=ref_img.affine, header=hdr)
+
     nib.save(prob_img, output_path)
+
+    # Confirm file is fully written before moving on (small delay)
+    for _ in range(10):
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            break
+        time.sleep(0.1)
+
     print(f"Probability map saved to {output_path}")
+
+def save_uncertainty_as_nifti(uncertainty_map, ref_img, output_path):
+    """
+    Save a 3D uncertainty map as a NIfTI file with optional scaling.
+    """
+    if isinstance(uncertainty_map, torch.Tensor):
+        uncertainty_map = uncertainty_map.cpu().numpy()
+    uncertainty_map = minmax_uncertainties(uncertainty_map)
+    uncertainty_map = uncertainty_map.astype(np.float32)
+    uncertainty_nifti = nib.Nifti1Image(uncertainty_map, affine=ref_img.affine, header=ref_img.header)
+    nib.save(uncertainty_nifti, output_path)
+
+    for _ in range(10):
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            break
+        time.sleep(0.1)
+
+    print(f"Uncertainty map saved to {output_path}")
 
 def extract_patient_id(path):
     """
@@ -130,18 +163,6 @@ def extract_patient_id(path):
     if valid_tokens:
         return valid_tokens[-1]
     return "UNKNOWN"
-
-def save_uncertainty_as_nifti(uncertainty_map, ref_img, output_path):
-    """
-    Save a 3D uncertainty map as a NIfTI file with optional scaling.
-    """
-    if isinstance(uncertainty_map, torch.Tensor):
-        uncertainty_map = uncertainty_map.cpu().numpy()
-    uncertainty_map = minmax_uncertainties(uncertainty_map)
-    uncertainty_map = uncertainty_map.astype(np.float32)
-    uncertainty_nifti = nib.Nifti1Image(uncertainty_map, affine=ref_img.affine, header=ref_img.header)
-    nib.save(uncertainty_nifti, output_path)
-    print(f"Uncertainty map saved to {output_path}")
 
 def make_progress_callback(offset, total, progress_queue, scale=1.0):
     """
@@ -297,10 +318,3 @@ def ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_i
                 save_uncertainty_as_nifti(fused_uncertainty[region], ref_img, output_path)
 
             torch.cuda.empty_cache()
-
-# if __name__ == "__main__":
-#     patient_id = "01556"
-#     models_dict = load_all_models()
-#     composite_score_weights = {"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}
-#     test_loader = dataloaders.load_test_data(config.json_path, config.root_dir)
-#     ensemble_segmentation(test_loader, models_dict, composite_score_weights, n_iterations=1, patient_id=patient_id, output_dir="./assets/segmentations")

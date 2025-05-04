@@ -1,36 +1,31 @@
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
+
+def compute_simple_volumes(seg, dx, dy, dz):
+    voxel_vol_cm3 = (dx * dy * dz) / 1_000
+    ncr = np.sum(seg == 1) * voxel_vol_cm3
+    ed  = np.sum(seg == 2) * voxel_vol_cm3
+    et  = np.sum(seg == 3) * voxel_vol_cm3
+    return {
+        "NCR (cm³)":   round(ncr, 2),
+        "ED (cm³)":    round(ed, 2),
+        "ET (cm³)":    round(et, 2),
+        "Total (cm³)": round(ncr + ed + et, 2),
+    }
 
 
-def compute_simple_volumes(seg_data: np.ndarray, dx: float, dy: float, dz: float):
+def volumes_from_nii(nii_path: str):
     """
-    Compute the total volumes (in cm³) for each label in a segmentation.
-
-    Parameters:
-    -----------
-    seg_data : np.ndarray
-        A 3D array of integer labels, e.g. {0,1,2,3}.
-    dx, dy, dz : float
-        The voxel spacing (in mm) along each dimension.
-
-    Returns:
-    -------
-    Tuple[float, float, float]
-        Volumes for labels 1, 2, and 3 in cubic centimeters.
+    Convenience wrapper: load a NIfTI seg file and compute labelled volumes.
     """
-    voxel_vol_mm3 = dx * dy * dz
-    voxel_vol_cm3 = voxel_vol_mm3 / 1000.0
+    import nibabel as nib
 
-    ncr_voxels = np.sum(seg_data == 1)
-    ed_voxels  = np.sum(seg_data == 2)
-    et_voxels  = np.sum(seg_data == 3)
+    img        = nib.load(nii_path, mmap=False)
+    seg        = img.get_fdata()
+    dx, dy, dz = img.header.get_zooms()[:3]              
 
-    ncr_volume = ncr_voxels * voxel_vol_cm3
-    ed_volume  = ed_voxels  * voxel_vol_cm3
-    et_volume  = et_voxels  * voxel_vol_cm3
-
-    return ncr_volume, ed_volume, et_volume
-
+    return compute_simple_volumes(seg, dx, dy, dz)
 
 def plot_segmentation(
     brain_slice: np.ndarray,
@@ -165,59 +160,65 @@ def plot_uncertainty(
     brain_slice: np.ndarray,
     unc_slices: list[tuple[str, np.ndarray]],
     threshold: float,
-    mode: str,
-    opacity: float = 0.4,
+    mode: str = "Above",
+    opacity: float = 0.6,
+    cmap: list[str] | str = px.colors.sequential.Hot,   # <-- palette here
     width: int = 800,
-    height: int = 800
+    height: int = 800,
 ) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(go.Heatmap(
-        z=brain_slice,
-        colorscale='gray', showscale=False, hoverinfo='skip', zsmooth='best'
-    ))
 
-    unc_colors = {'NCR':(1,0,0), 'ED':(0,1,0), 'ET':(0,0,1)}
-    composite_text = np.full(brain_slice.shape, '', dtype='<U50')
+    # ------------- build composite map & hover text (unchanged) -------------
+    unc_combined = np.zeros_like(brain_slice, dtype=float)
+    hover_text   = np.full(brain_slice.shape, "", dtype=object)
 
-    for label, unc_data in unc_slices:
-        if mode == 'Below':
-            masked = np.where(unc_data <= threshold, unc_data, 0.0)
-        else:
-            masked = np.where(unc_data >= threshold, unc_data, 0.0)
-        if not np.any(masked):
+    for label, unc in unc_slices:
+        mask = (unc <= threshold) if mode == "Below" else (unc >= threshold)
+        if not np.any(mask):
             continue
-        r,g,b = unc_colors.get(label, (1,1,1))
-        rgba = f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)'
-        fig.add_trace(go.Heatmap(
-            z=masked,
-            colorscale=[[0,'rgba(0,0,0,0)'],[1,rgba]],
-            opacity=opacity,
-            hoverinfo='skip',
-            showscale=False
-        ))
-        fmt = np.vectorize(lambda x: f"{x:.3f}")
-        txt = fmt(masked)
-        mask_text = (composite_text == '')
-        composite_text = np.where(
-            mask_text,
-            txt,
-            np.char.add(np.char.add(composite_text, '<br>'), txt)
+        unc_combined = np.where(mask, np.maximum(unc_combined, unc), unc_combined)
+        txt = np.vectorize(lambda x: f"{label}: {x:.3f}")(unc)
+        hover_text = np.where(
+            mask,
+            np.where(hover_text == "", txt, hover_text + "<br>" + txt),
+            hover_text,
         )
 
-    fig.add_trace(go.Heatmap(
-        z=brain_slice,
-        text=composite_text,
-        hoverinfo='text',
-        hovertemplate='%{text}<extra></extra>',
-        colorscale=[[0,'rgba(0,0,0,0)'],[1,'rgba(0,0,0,0)']],
-        opacity=1,
-        showscale=False
-    ))
+    # ----------------------------- plot -------------------------------------
+    fig = go.Figure()
+
+    # anatomy
+    fig.add_trace(
+        go.Heatmap(
+            z=brain_slice,
+            colorscale="gray",
+            showscale=False,
+            hoverinfo="skip",
+            zsmooth="best",
+        )
+    )
+
+    # uncertainty overlay – note: **no `colorscale` here**
+    fig.add_trace(
+        go.Heatmap(
+            z=unc_combined,
+            opacity=opacity,
+            text=hover_text,
+            hoverinfo="text",
+            coloraxis="coloraxis",
+            showscale=True,
+        )
+    )
 
     fig.update_layout(
-        width=width, height=height,
-        margin=dict(l=0,r=0,t=20,b=80),
+        width=width,
+        height=height,
+        margin=dict(l=0, r=0, t=20, b=80),
         xaxis=dict(visible=False),
-        yaxis=dict(visible=False, autorange='reversed', scaleanchor='x', scaleratio=1)
+        yaxis=dict(visible=False, autorange="reversed", scaleanchor="x", scaleratio=1),
+        coloraxis=dict(                              # <- palette lives here
+            colorscale=cmap,
+            colorbar=dict(title="Uncertainty", len=0.8, thickness=15),
+        ),
     )
+
     return fig
