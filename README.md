@@ -40,7 +40,7 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
 ---
 
 ## 📂 Folder Structure
-<details>
+```bash
 ├── EDA                              ← Exploratory data analysis notebooks
 ├── hyperparameter_tuning_results    ← Hyperparameter search outputs (logs, plots)
 ├── other                            ← Miscellaneous scripts & notes
@@ -58,4 +58,4 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
     ├── uncertainty                  ← Uncertainty estimation methods
     ├── utils                        ← Utility functions
     └── visualization                ← Plotting & figure generation
-</details>
+```
