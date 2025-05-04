@@ -46,7 +46,7 @@ def main(method, out_dir, n_iter=10, pid=None):
     metrics_map = {m: load_weights(f"../models/performance/{m}/average_metrics.json")
                    for m in models_dict}
     perf_scores = {
-      r: {m: compute_composite_scores(metrics_map[m], wts)[r] for m in models_dict}
+      r: {m: compute_composite_scores(metrics_map[m], WTS)[r] for m in models_dict}
       for r in REGIONS
     }
     perf_weights = normalize_weights(perf_scores)

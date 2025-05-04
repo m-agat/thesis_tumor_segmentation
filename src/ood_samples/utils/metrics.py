@@ -1,43 +1,10 @@
-#!/usr/bin/env python3
-import os
-import nibabel as nib
 import torch
 import numpy as np
-from typing import List
-import sys
-sys.path.append("../")
-# --------------------------------------------------------------------------
-# your helper lives somewhere else – import it (or paste it above)
-import config.config as config                      # gives DEVICE
 from monai.metrics import compute_hausdorff_distance, ConfusionMatrixMetric
 from monai.metrics import DiceMetric
 from monai.utils.enums import MetricReduction
 from scipy.ndimage import center_of_mass
-
-DEVICE = config.device          # whatever you use elsewhere
-N_CLASSES = 4                    # background + NCR + ED + ET
-swinunetr_PRED_DIR = (
-    "../models/predictions/swinunetr"        # <-- EDIT if different
-)
-OOD_DATA_PATH   = "/home/magata/data/braintumor_data"
-PATIENT_IDS     = ["VIGO_01", "VIGO_03"]             # extend whenever you like
-# --------------------------------------------------------------------------
-
-
-def load_nifti(path: str) -> np.ndarray:
-    """Load a NIfTI file as a numpy array."""
-    return nib.load(path).get_fdata()
-
-
-def to_one_hot(volume: np.ndarray, n_classes: int = N_CLASSES) -> List[torch.Tensor]:
-    """
-    Turn a label volume (H,W,D) into a list of n_classes boolean tensors,
-    one per label, ready for compute_metrics.
-    """
-    return [
-        torch.from_numpy((volume == c).astype(np.uint8)).to(DEVICE)
-        for c in range(n_classes)
-    ]
+from utils.io import *
 
 def compute_metrics(pred_list, gt_list):
     """
@@ -147,36 +114,3 @@ def compute_metrics(pred_list, gt_list):
             spec[i] = 1.0
 
     return dice_scores, hd95, sens, spec
-
-
-def evaluate_patient(pid: str):
-    # ---- build paths -------------------------------------------------------
-    pred_path = os.path.join(swinunetr_PRED_DIR, f"swinunetr_{pid}_pred_seg.nii.gz")
-    gt_path   = os.path.join(OOD_DATA_PATH, pid, f"{pid}_seg.nii.gz")
-
-    # ---- load volumes ------------------------------------------------------
-    pred_vol = load_nifti(pred_path).astype(np.int16)
-    gt_vol   = load_nifti(gt_path).astype(np.int16)
-
-    # ---- convert to one-hot channel lists ----------------------------------
-    pred_list = to_one_hot(pred_vol)
-    gt_list   = to_one_hot(gt_vol)
-
-    # ---- compute metrics ---------------------------------------------------
-    dice, hd95, sens, spec = compute_metrics(pred_list, gt_list)
-
-    # ---- print results -----------------------------------------------------
-    region_names = ["BG", "NCR", "ED", "ET"]
-    print(f"\n=== Patient {pid} ===")
-    for i, name in enumerate(region_names):
-        print(
-            f"{name:>3s}:  Dice {dice[i]:6.3f}  "
-            f"HD95 {hd95[i]:6.2f}  "
-            f"Sens {sens[i]:6.3f}  "
-            f"Spec {spec[i]:6.3f}"
-        )
-
-
-if __name__ == "__main__":
-    for pid in PATIENT_IDS:
-        evaluate_patient(pid)

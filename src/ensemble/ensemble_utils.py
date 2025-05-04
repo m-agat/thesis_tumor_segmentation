@@ -14,7 +14,7 @@ DEVICE = config.device
 ROI = config.roi
 SW_BATCH = config.sw_batch_size
 OVERLAP = config.infer_overlap
-wts = {"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}
+WTS = {"Dice": 0.45, "HD95": 0.15, "Sensitivity": 0.3, "Specificity": 0.1}
 
 def load_model(model_cls, ckpt_path, device, roi, sw_batch, overlap):
     model = model_cls.to(device)
@@ -39,14 +39,14 @@ def load_all_models(model_map, device, roi, sw_batch, overlap):
 def load_weights(path):
     with open(path) as f: return json.load(f)
 
-def compute_composite_scores(metrics, wts):
+def compute_composite_scores(metrics, WTS):
     out = {}
     for r in REGIONS:
         hd = 1/(1+metrics[f"HD95 {r}"])
-        out[r] = ( wts["Dice"] * metrics[f"Dice {r}"]
-                  + wts["HD95"] * hd
-                  + wts["Sensitivity"] * metrics[f"Sensitivity {r}"]
-                  + wts["Specificity"] * metrics[f"Specificity {r}"] )
+        out[r] = ( WTS["Dice"] * metrics[f"Dice {r}"]
+                  + WTS["HD95"] * hd
+                  + WTS["Sensitivity"] * metrics[f"Sensitivity {r}"]
+                  + WTS["Specificity"] * metrics[f"Specificity {r}"] )
     return out
 
 def normalize_weights(perf_weights):
@@ -57,7 +57,12 @@ def normalize_weights(perf_weights):
     return perf_weights
 
 def extract_patient_id(path):
-    return re.findall(r"\d+", path)[-1]
+    base = os.path.basename(path)
+    m = re.search(r"[A-Za-z]+_[0-9]+", base)
+    if m:
+        return m.group(0)
+    nums = re.findall(r"\d+", path)
+    return nums[-1] if nums else None
 
 def save_nifti(arr, ref_path, out_path, dtype=np.uint8):
     if isinstance(arr, torch.Tensor): arr = arr.detach().cpu().numpy()

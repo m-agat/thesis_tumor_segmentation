@@ -1,5 +1,5 @@
 import torch
-from ensemble_utils import REGIONS
+from ensemble.ensemble_utils import REGIONS
 from uncertainty.test_time_augmentation import tta_variance
 from uncertainty.test_time_dropout   import ttd_variance, minmax_uncertainties
 

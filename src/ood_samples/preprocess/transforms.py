@@ -1,22 +1,5 @@
 import os 
-import subprocess
-import nibabel as nib
-import numpy as np
 import SimpleITK as sitk
-import pandas as pd
-import matplotlib.pyplot as plt
-from pathlib import Path
-
-# Paths for different data sources
-# ood_data_path = r"\\wsl.localhost\Ubuntu-22.04\home\magata\data\braintumor_data" # Path to OOD cases
-ood_data_path = "/home/magata/data/braintumor_data"
-
-def get_ood_cases():
-    """Get list of out-of-distribution case folders."""
-    if not os.path.exists(ood_data_path):
-        raise FileNotFoundError(f"OOD data directory not found at {ood_data_path}")
-    return [os.path.join(ood_data_path, f, "original") for f in os.listdir(ood_data_path) 
-            if os.path.isdir(os.path.join(ood_data_path, f))]
 
 def skull_strip_with_hd_bet(input_path, output_dir):
     """
@@ -58,7 +41,6 @@ def skull_strip_with_hd_bet(input_path, output_dir):
     # if you care about the mask, you can also test mask_file here
 
     return skull_file
-
 
 
 def preprocess_images(nifti_paths, output_dir, progress_callback=None):
@@ -136,85 +118,3 @@ def preprocess_images(nifti_paths, output_dir, progress_callback=None):
             progress_callback(current_step / total_steps)
 
     return output_paths
-
-def process_ood_case(patient_folder):
-    """
-    Process a single out-of-distribution case.
-    """
-    print(f"Processing OOD case: {patient_folder}")
-    
-    # Create preprocessed directory
-    preprocessed_dir = os.path.join(patient_folder, "preprocessed1")
-    os.makedirs(preprocessed_dir, exist_ok=True)
-    
-    # Get all NIfTI files in the patient folder
-    nifti_files = []
-    for root, _, files in os.walk(patient_folder):
-        for file in files:
-            # Skip the compressed folders, only use the .nii files
-            if file.endswith('.nii') and not file.endswith('.nii.gz'):
-                nifti_files.append(os.path.join(root, file))
-    
-    if not nifti_files:
-        print(f"No NIfTI files found in {patient_folder}")
-        return
-    
-    # Sort files in the required order: FLAIR, T1GAD, T1, T2
-    def get_modality_order(file_path):
-        """Sort files in the required order: FLAIR, T1GAD, T1, T2"""
-        filename = os.path.basename(file_path).lower()
-        if 'flair_orig' in filename:
-            return 0
-        elif 't1gad_orig' in filename:
-            return 1
-        elif 't1_orig' in filename and 't1gad' not in filename:
-            return 2
-        elif 't2_orig' in filename:
-            return 3
-        else:
-            return 4  # Put unknown modalities at the end
-    
-    nifti_files.sort(key=get_modality_order)
-    
-    # Verify we have all required modalities
-    required_modalities = ['flair_orig', 't1gad_orig', 't1_orig', 't2_orig']
-    found_modalities = [os.path.basename(f).lower() for f in nifti_files]
-    missing_modalities = [m for m in required_modalities if not any(m in f for f in found_modalities)]
-    
-    if missing_modalities:
-        print(f"Warning: Missing required modalities in {patient_folder}: {', '.join(missing_modalities)}")
-        return
-    
-    # Preprocess the images
-    preprocessed_paths = preprocess_images(nifti_files, preprocessed_dir)
-    
-    # Visualize the results
-    visualize_preprocessed_images(preprocessed_paths)
-
-def visualize_preprocessed_images(preprocessed_paths):
-    """
-    Visualize the preprocessed images.
-    """
-    fig, axs = plt.subplots(2, 2, figsize=(10, 10))
-    for i, path in enumerate(preprocessed_paths[:4]):  # Show up to 4 images
-        img = nib.load(path).get_fdata()
-        center_slice = img.shape[2] // 2
-        ax = axs[i//2, i%2]
-        ax.imshow(img[:, :, center_slice], cmap='gray')
-        ax.set_title(os.path.basename(path))
-        ax.axis('off')
-    plt.tight_layout()
-    plt.show()
-
-def main():
-    # Process all OOD cases
-    ood_cases = get_ood_cases()
-    for case in ood_cases:
-        print(case)
-        if case != "/home/magata/data/braintumor_data/VIGO_01/original":
-            continue
-        process_ood_case(case)
-
-if __name__ == "__main__":
-    main()
-    
