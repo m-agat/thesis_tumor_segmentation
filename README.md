@@ -3,7 +3,7 @@
 > **Towards Reliable Brain Tumor Segmentation in MRI Neuroimaging**  
 > **Integrating Uncertainty Estimation and Ensemble Methods for Clinical Applications**
 
-This repository contains the code, data‑preparation steps, experiments and web‑app for my UPC MSc thesis. We develop and evaluate an uncertainty‑aware ensemble of four state‑of‑the‑art 3D deep‑learning models for brain tumor segmentation in multimodal MRI, and integrate it into an interactive clinical web application.
+This repository contains the code, data‑preparation steps, experiments and web‑app for my UPC MSc thesis. I develop and evaluate an uncertainty‑aware ensemble of four state‑of‑the‑art 3D deep‑learning models for brain tumor segmentation in multimodal MRI, and integrate it into an interactive clinical web application.
 
 ---
 
