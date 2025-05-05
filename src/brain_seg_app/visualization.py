@@ -197,7 +197,7 @@ def plot_uncertainty(
         )
     )
 
-    # uncertainty overlay – note: **no `colorscale` here**
+    # uncertainty overlay 
     fig.add_trace(
         go.Heatmap(
             z=unc_combined,
@@ -205,7 +205,7 @@ def plot_uncertainty(
             text=hover_text,
             hoverinfo="text",
             coloraxis="coloraxis",
-            showscale=True,
+            showscale=False,
         )
     )
 
@@ -215,10 +215,11 @@ def plot_uncertainty(
         margin=dict(l=0, r=0, t=20, b=80),
         xaxis=dict(visible=False),
         yaxis=dict(visible=False, autorange="reversed", scaleanchor="x", scaleratio=1),
-        coloraxis=dict(                              # <- palette lives here
+        coloraxis=dict(                              
             colorscale=cmap,
             colorbar=dict(title="Uncertainty", len=0.8, thickness=15),
-        ),
+            showscale=False
+        )
     )
 
     return fig
