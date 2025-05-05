@@ -9,18 +9,17 @@ This repository contains the code, data‑preparation steps, experiments and web
 
 ## 📑 Table of Contents
 
-1. [Project Overview](#project-overview)  
-2. [Folder Structure](#folder-structure)  
-3. [Getting Started](#getting-started)  
+1. [Project Overview](#-project-overview)  
+2. [Folder Structure](#-folder-structure)  
+3. [Getting Started](#-getting-started)  
    - [Requirements](#requirements)  
    - [Installation](#installation)  
-4. [Usage](#usage)  
-   - [Training](#training)  
+4. [Usage](#-usage)  
+   - [Training](#1.-training)  
    - [Inference](#inference)  
    - [Web App](#web-app)  
-5. [Results & Figures](#results--figures)  
-6. [Citing This Work](#citing-this-work)  
-7. [License](#license)  
+5. [Results and Figures](#-results-and-figures)
+6. [Web App Demo](#-web-app-demo)
 
 ---
 
@@ -45,17 +44,16 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
 ├── hyperparameter_tuning_results    ← Hyperparameter search outputs (logs, plots)
 ├── other                            ← Miscellaneous scripts & notes
 └── src                              ← All source code
-    ├── brain_seg_app                ← Flask/FastAPI web application
+    ├── brain_seg_app                ← Streamlit web application
     ├── calibration                  ← Probability calibration routines
-    ├── config                       ← YAML/JSON config files
-    ├── confusion_matrices           ← Auto‑generated confusion matrices
+    ├── config                       ← Config files
     ├── dataset                      ← Data loaders & preprocessing
     ├── ensemble                     ← Ensemble‑fusion code
-    ├── models                       ← Model definitions (V‑Net, U‑Net, etc.)
+    ├── models                       ← Model definitions (V‑Net, SegResNet, etc.)
     ├── ood_samples                  ← Out‑of‑distribution test cases
     ├── stats                        ← Statistical analysis scripts
-    ├── train                        ← Training & cross‑validation loops
-    ├── uncertainty                  ← Uncertainty estimation methods
+    ├── train                        ← Training & hyperparameter tuning scripts
+    ├── uncertainty                  ← Uncertainty estimation methods and evaluation
     ├── utils                        ← Utility functions
     └── visualization                ← Plotting & figure generation
 ```
@@ -91,3 +89,45 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
    cd src/brain_seg_app
    python -m streamlit run app.py
    ```
+
+## ⚙️ Usage
+1. **Training**
+   All training scripts live in `src/train`. To launch a 5-fold cross-validation for hypertuning a model, e.g., a V-Net:
+   ```bash
+   cd src/train/
+   python hyperparameter_tuning.py --model_name vnet   
+   ```
+2. **Inference**
+   To run inference using one of four single model available (vnet, attunet, segresnet, swinunetr):
+   ```bash
+   cd src/models
+   python predict_case.py --model vnet --out ../models/predictions
+   ```
+   If you want to predict a single case:
+   ```bash
+   python predict_case.py --model vnet --patient 00332 --out ../models/predictions
+   ```
+   To run inference using an ensemble model using one of five ensemble strategies (simple, perf, tta, ttd, hybrid):
+   ```bash
+   cd src/ensemble
+   python run_ensemble.py --method hybrid --output-path ./results/hybrid_ens --n-iter 20 --patient-id 00332
+   ```
+   
+4. **Web app**
+   To launch the clinical toolbox prototype:
+   ```bash
+   cd src/brain_seg_app
+   python -m streamlit run app.py
+   ```
+
+## 📈 Results and Figures
+
+## 🎬 Web App Demo
+Below is a quick demo of the interactive segmentation interface:
+
+
+
+1. Upload your MRI series  
+2. Watch the live segmentation + uncertainty estimate  
+3. Download results or explore slice‑by‑slice  
+
