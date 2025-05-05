@@ -125,6 +125,9 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
 ## 🎬 Web App Demo
 Below is a quick demo of the interactive segmentation interface:
 
+![File upload](assets/chrome_xwako7XgLj.gif)
+
+
 
 
 1. Upload your MRI series  
