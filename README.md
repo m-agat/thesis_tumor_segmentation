@@ -18,7 +18,7 @@ This repository contains the code, data‑preparation steps, experiments and web
    - [Training](#1.-training)  
    - [Inference](#inference)  
    - [Web App](#web-app)  
-5. [Results and Figures](#-results-and-figures)
+5. [Results](#-results)
 6. [Web App Demo](#-web-app-demo)
 
 ---
@@ -115,7 +115,10 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
    python -m streamlit run app.py
    ```
 
-## 📈 Results and Figures
+## 📈 Results
+Dice scores for each model:
+
+![Dice scores](assets/dice_scores_indiv_vs_ensemble.png)
 
 ## 🎬 Web App Demo
 Below is a quick demo of the interactive segmentation interface:
