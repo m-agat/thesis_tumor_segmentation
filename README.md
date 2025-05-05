@@ -63,8 +63,8 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
 ### Requirements
 
 - Python 3.10+  
-- PyTorch 1.12+  
-- MONAI 0.9+  
+- PyTorch 2.3.1+  
+- MONAI 1.3.2+  
 - see `requirements.txt` for full list  
 
 ### Installation
@@ -83,11 +83,6 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
 4. **Install dependencies**
    ```bash
    pip install -r requirements.txt
-   ```
-5. **Run the app**
-   ```bash
-   cd src/brain_seg_app
-   python -m streamlit run app.py
    ```
 
 ## ⚙️ Usage
@@ -127,9 +122,12 @@ Below is a quick demo of the interactive segmentation interface:
 
 1. **Upload your MRI scans**
    
-![File upload](assets/chrome_xwako7XgLj.gif)
+![File upload](assets/upload_files.gif)
 
 3. **Run the segmentation and uncertainty estimation**
-   
-4. **Explore results slice‑by‑slice and download them if you want**
 
+![Running segmentation](assets/run_segmentation.gif)
+   
+5. **Explore results slice‑by‑slice and download them if you want**
+
+![Showing results](assets/show_results.gif)
