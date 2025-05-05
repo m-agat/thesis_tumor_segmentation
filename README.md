@@ -125,12 +125,11 @@ Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment p
 ## 🎬 Web App Demo
 Below is a quick demo of the interactive segmentation interface:
 
+1. **Upload your MRI scans**
+   
 ![File upload](assets/chrome_xwako7XgLj.gif)
 
-
-
-
-1. Upload your MRI series  
-2. Watch the live segmentation + uncertainty estimate  
-3. Download results or explore slice‑by‑slice  
+3. **Run the segmentation and uncertainty estimation**
+   
+4. **Explore results slice‑by‑slice and download them if you want**
 
