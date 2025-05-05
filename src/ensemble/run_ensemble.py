@@ -1,7 +1,6 @@
-# run_ensemble.py
 import os, torch
-from ensemble_utils import *
-from segmenters import SimpleAverage, PerfWeighted, TTAWeighted, TTDWeighted, HybridWeighted
+from ensemble.ensemble_utils import *
+from ensemble.segmenters import SimpleAverage, PerfWeighted, TTAWeighted, TTDWeighted, HybridWeighted
 from config.config import device, roi, sw_batch_size, infer_overlap, model_paths, json_path, root_dir, args
 from dataset.dataloaders import load_test_data
 import sys
