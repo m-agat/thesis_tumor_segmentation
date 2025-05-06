@@ -1,4 +1,5 @@
 import streamlit as st
+import os 
 
 from config_web import PAGE_TITLE, LAYOUT, PREPROC_DIR, SEG_DIR
 from ui.sidebar import file_upload_section
@@ -9,6 +10,9 @@ from segmentation import load_models, run_ensemble
 import time
 
 def main():
+    # make sure directories exist 
+    for d in (PREPROC_DIR, SEG_DIR):
+        os.makedirs(d, exist_ok=True)
     # Page config
     st.set_page_config(page_title=PAGE_TITLE, layout=LAYOUT)
     st.title(PAGE_TITLE)
