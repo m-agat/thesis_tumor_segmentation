@@ -5,6 +5,8 @@
 
 This repository contains the code, data‑preparation steps, experiments and web‑app for my UPC MSc thesis. I develop and evaluate an uncertainty‑aware ensemble of four state‑of‑the‑art 3D deep‑learning models for brain tumor segmentation in multimodal MRI, and integrate it into an interactive clinical web application.
 
+The full thesis is available at: https://hdl.handle.net/2117/430325
+
 ---
 
 ## 📑 Table of Contents
