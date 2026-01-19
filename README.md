@@ -9,7 +9,7 @@ This repository contains the code, data‑preparation steps, experiments, and we
 
 ## 🚀 Project Overview
 
-Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment planning, and monitoring. However, deep‑learning models can be over‑confident and fail silently—especially on rare tumor subregions or out‑of‑distribution scans.
+Accurate brain tumor segmentation in MRI is essential for diagnosis, treatment planning, and monitoring. However, deep‑learning models can be over‑confident and fail silently - especially on rare tumor subregions or out‑of‑distribution scans.
 
 **Contributions:**  
 - Trained four 3D CNN/Transformer architectures (V‑Net, SegResNet, Attention U‑Net, SwinUNETR) via 5‑fold cross‑validation  
